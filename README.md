@@ -28,14 +28,20 @@ when the app restarts. A small one-page UI is served at `/ui`.
 
 | What | URL |
 |---|---|
-| App | http://127.0.0.1:8000/quest/new |
+| App (web page) | http://127.0.0.1:8000/ui |
+| API docs (Swagger) | http://127.0.0.1:8000/docs |
 | Metrics | http://127.0.0.1:8000/metrics |
 | Prometheus | http://localhost:9090 (targets: `/targets`) |
 | Grafana | http://localhost:3000 (admin / admin) |
 | Kibana | http://localhost:5601/app/discover |
 | Elasticsearch | http://localhost:9200 |
 
-Generate traffic by refreshing `/quest/new`, or resolve a quest:
+Generate traffic by clicking "New quest" on the web page, or with curl.
+Create a quest (returns `201 Created`):
+```
+curl -X POST http://127.0.0.1:8000/quests
+```
+Resolve a quest:
 ```
 curl -X POST http://127.0.0.1:8000/quest/{instance_id}/complete
 curl -X POST http://127.0.0.1:8000/quest/{instance_id}/skip
@@ -60,7 +66,7 @@ python scripts\load_test.py --duration 60 --rate 2
   metrics). Open Kibana Discover (data view `quest-app-logs`) for logs; see
   `logging/kibana-queries.md` for ready-made searches.
 - **Fault injection (Part E1):** the app has an environment-variable switch,
-  off by default, that delays every Nth call to `GET /quest/new`:
+  off by default, that delays every Nth call to `POST /quests`:
   ```
   set FAULT_DELAY_MS=500
   set FAULT_EVERY_N=5

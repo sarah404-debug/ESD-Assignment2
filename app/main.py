@@ -97,11 +97,11 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 # ── Fault injection switch (Part E1) ───────────────────────
 # Off by default. To turn on, set these two environment variables (see
 # docker-compose.yml / .env). FAULT_EVERY_N=0 means "never trigger".
-# Every Nth call to GET /quest/new sleeps for FAULT_DELAY_MS milliseconds,
+# Every Nth call to POST /quests sleeps for FAULT_DELAY_MS milliseconds,
 # simulating a slow dependency. This is easy to switch off again afterwards.
 FAULT_DELAY_MS = int(os.environ.get("FAULT_DELAY_MS", "0"))
 FAULT_EVERY_N = int(os.environ.get("FAULT_EVERY_N", "0"))
-_fault_request_count = 0  # counts calls to /quest/new, to know when "every Nth" is due
+_fault_request_count = 0  # counts calls to POST /quests, to know when "every Nth" is due
 
 # ── Quest pool ──────────────────────────────────────────────
 QUESTS = [
@@ -244,8 +244,10 @@ def read_root():
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-@app.get("/quest/new")
-def get_new_quest():
+# Creating a quest changes data, so it is a POST (not a GET) on the /quests
+# collection. It answers 201 Created and a Location header with the new quest's address.
+@app.post("/quests", status_code=201)
+def create_quest(response: Response):
     global _fault_request_count
 
     # Fault injection (Part E1): if enabled, delay every Nth call to this
@@ -287,6 +289,7 @@ def get_new_quest():
         "difficulty": quest["difficulty"],
     })
 
+    response.headers["Location"] = f"/quests/{instance_id}"
     return quest_instances[instance_id]
 
 def _resolve_quest(instance_id: str, new_status: str):

@@ -20,7 +20,7 @@ Kibana shows times in the browser's timezone. The raw logs and Elasticsearch use
 |---|---|---|
 | `app.severity : "WARNING"` | Every warning line (client errors and app warnings) | 2 documents |
 | `app.request_id : "08d08ced29b7"` | Every log line written while handling one request | 2 documents ("quest not found" and "request completed") |
-| `app.event : "quest_generated"` | Each time a quest was handed out by `/quest/new` | 16 documents |
+| `app.event : "quest_generated"` | Each time a quest was handed out by `POST /quests` (`/quest/new` in Assignment 1) | 16 documents |
 | `app.status >= 400` | HTTP requests that failed with a 4xx or 5xx status | 1 document |
 | `app.severity : "ERROR"` | Server errors (unhandled exceptions, 5xx responses) | 0 documents (no server errors so far) |
 

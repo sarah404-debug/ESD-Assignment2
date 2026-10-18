@@ -195,7 +195,7 @@
     newQuestBtn.disabled = true;
     renderEmpty('Fetching a quest…');
     try {
-      const res = await fetch('/quest/new');
+      const res = await fetch('/quests', { method: 'POST' });
       if (!res.ok) throw await errorFrom(res);
       const quest = await res.json();
       renderQuest(quest);

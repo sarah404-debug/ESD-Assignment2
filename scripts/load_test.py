@@ -53,7 +53,7 @@ def main():
 
     status_counts = {}       # HTTP status code -> how many responses
     outcomes = {"completed": 0, "skipped": 0, "abandoned": 0, "left open": 0, "bad id": 0}
-    new_quest_times = []     # client-side seconds for each GET /quest/new
+    new_quest_times = []     # client-side seconds for each POST /quests
     total_requests = 0
 
     def record(status):
@@ -66,13 +66,13 @@ def main():
     try:
         while time.time() < end_time:
             # 1) Ask for a new quest.
-            status, quest, took = call(args.base_url, "GET", "/quest/new")
+            status, quest, took = call(args.base_url, "POST", "/quests")
             record(status)
             new_quest_times.append(took)
 
             # 2) Decide what the "user" does with it.
             roll = random.random()
-            if status == 200 and quest:
+            if status == 201 and quest:
                 instance_id = quest["instance_id"]
                 if roll < 0.55:
                     action, outcome = "complete", "completed"
@@ -111,7 +111,7 @@ def main():
     print(f"Total requests: {total_requests}")
     print(f"Responses by status: {status_counts}")
     print(f"Quest outcomes: {outcomes}")
-    print(f"GET /quest/new client-side time: average {average * 1000:.1f} ms, p95 {p95 * 1000:.1f} ms")
+    print(f"POST /quests client-side time: average {average * 1000:.1f} ms, p95 {p95 * 1000:.1f} ms")
 
 
 if __name__ == "__main__":
