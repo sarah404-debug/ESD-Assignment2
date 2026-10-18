@@ -8,8 +8,11 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
 app = FastAPI()
@@ -51,6 +54,45 @@ logger.propagate = False
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(JsonFormatter())
 logger.addHandler(_handler)
+
+# ── Errors ──────────────────────────────────────────────────
+# Every error the API returns has the same JSON shape:
+#   {"error": "<short_code>", "message": "<text for humans>", "request_id": "<id>"}
+# "error" is a fixed code a program can check; "request_id" matches the log line
+# for this request in Kibana.
+class ApiError(Exception):
+    """Raised by our own code for an expected problem, e.g. an unknown quest."""
+    def __init__(self, status_code: int, error: str, message: str):
+        self.status_code = status_code
+        self.error = error
+        self.message = message
+
+def error_response(status_code: int, error: str, message: str, details=None):
+    body = {"error": error, "message": message, "request_id": request_id_var.get()}
+    if details:
+        body["details"] = details
+    return JSONResponse(status_code=status_code, content=body)
+
+@app.exception_handler(ApiError)
+async def handle_api_error(request: Request, exc: ApiError):
+    return error_response(exc.status_code, exc.error, exc.message)
+
+# Errors FastAPI raises by itself, e.g. an unknown path (404) or the wrong method (405).
+HTTP_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
+
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_error(request: Request, exc: StarletteHTTPException):
+    error = HTTP_ERROR_CODES.get(exc.status_code, "http_error")
+    return error_response(exc.status_code, error, str(exc.detail))
+
+# Input that fails validation (wrong type, missing field, value not allowed).
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError):
+    details = [
+        {"field": ".".join(str(part) for part in e["loc"]), "problem": e["msg"]}
+        for e in exc.errors()
+    ]
+    return error_response(422, "validation_error", "The request has invalid input.", details)
 
 # ── Fault injection switch (Part E1) ───────────────────────
 # Off by default. To turn on, set these two environment variables (see
@@ -155,11 +197,11 @@ async def track_requests(request: Request, call_next):
     try:
         response = await call_next(request)
         status_code = response.status_code
-        response.headers["X-Request-ID"] = request_id
-        return response
     except Exception:
+        # A bug in our code: log it with the stack trace, but still answer
+        # in the same error format as every other error.
         logger.exception("unhandled exception", extra={"event": "unhandled_exception"})
-        raise
+        response = error_response(500, "internal_error", "Something went wrong on the server.")
     finally:
         # Use the route template (e.g. /quest/{instance_id}/complete), NOT the real URL,
         # so we don't create a new time series for every instance_id.
@@ -189,6 +231,9 @@ async def track_requests(request: Request, call_next):
             "status": status_code,
             "duration_ms": round(duration * 1000, 2),
         })
+
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 # ── Endpoints ───────────────────────────────────────────────
 @app.get("/")
@@ -250,7 +295,7 @@ def _resolve_quest(instance_id: str, new_status: str):
             "event": "quest_not_found",
             "instance_id": instance_id[:64],  # cap length: this value comes from the URL
         })
-        raise HTTPException(status_code=404, detail="Quest instance not found")
+        raise ApiError(404, "quest_not_found", "Quest instance not found")
 
     instance = quest_instances[instance_id]
 
@@ -260,7 +305,7 @@ def _resolve_quest(instance_id: str, new_status: str):
             "instance_id": instance_id,
             "quest_status": instance["status"],
         })
-        raise HTTPException(status_code=400, detail=f"Quest is already '{instance['status']}'")
+        raise ApiError(400, "quest_already_resolved", f"Quest is already '{instance['status']}'")
 
     instance["status"] = new_status
     category = instance["category"]

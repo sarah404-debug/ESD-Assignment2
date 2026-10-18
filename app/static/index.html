@@ -149,6 +149,16 @@
     setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500);
   }
 
+  // Every API error has the shape {"error", "message", "request_id"}; show its message.
+  async function errorFrom(res) {
+    try {
+      const body = await res.json();
+      return new Error(body.message ?? 'Request failed: ' + res.status);
+    } catch {
+      return new Error('Request failed: ' + res.status);
+    }
+  }
+
   function renderStats() {
     statsEl.innerHTML = `
       <span><b>${sessionCounts.completed}</b>Completed</span>
@@ -186,7 +196,7 @@
     renderEmpty('Fetching a quest…');
     try {
       const res = await fetch('/quest/new');
-      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      if (!res.ok) throw await errorFrom(res);
       const quest = await res.json();
       renderQuest(quest);
     } catch (err) {
@@ -202,7 +212,7 @@
     const id = currentQuest.instance_id;
     try {
       const res = await fetch(`/quest/${id}/${action}`, { method: 'POST' });
-      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      if (!res.ok) throw await errorFrom(res);
       sessionCounts[action === 'complete' ? 'completed' : action === 'skip' ? 'skipped' : 'abandoned']++;
       renderStats();
       showToast(action === 'complete' ? '✓ Quest completed!' : action === 'skip' ? 'Skipped.' : 'Abandoned.');
