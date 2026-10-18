@@ -47,16 +47,17 @@ curl http://127.0.0.1:8000/quests
 curl "http://127.0.0.1:8000/quests?status=in_progress"
 curl http://127.0.0.1:8000/quests/{instance_id}
 ```
-Resolve a quest:
+Resolve a quest (`status` can be `completed`, `skipped` or `abandoned`):
 ```
-curl -X POST http://127.0.0.1:8000/quest/{instance_id}/complete
-curl -X POST http://127.0.0.1:8000/quest/{instance_id}/skip
-curl -X POST http://127.0.0.1:8000/quest/{instance_id}/abandon
+curl -X PATCH http://127.0.0.1:8000/quests/{instance_id} -H "Content-Type: application/json" -d "{\"status\":\"completed\"}"
 ```
-A failure example (returns 404):
+Failure examples:
 ```
-curl -X POST http://127.0.0.1:8000/quest/fake-id/complete
+curl -X PATCH http://127.0.0.1:8000/quests/00000000-0000-0000-0000-000000000000 -H "Content-Type: application/json" -d "{\"status\":\"completed\"}"
+curl -X PATCH http://127.0.0.1:8000/quests/{instance_id} -H "Content-Type: application/json" -d "{\"status\":\"banana\"}"
 ```
+The first returns `404` (no such quest), the second `422` (status not
+allowed). Resolving an already-resolved quest returns `409`.
 
 For a steady stream of realistic traffic instead of manual clicking, use the
 load generator (standard library only, no installs):

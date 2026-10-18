@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
@@ -204,7 +205,7 @@ async def track_requests(request: Request, call_next):
         logger.exception("unhandled exception", extra={"event": "unhandled_exception"})
         response = error_response(500, "internal_error", "Something went wrong on the server.")
     finally:
-        # Use the route template (e.g. /quest/{instance_id}/complete), NOT the real URL,
+        # Use the route template (e.g. /quests/{instance_id}), NOT the real URL,
         # so we don't create a new time series for every instance_id.
         route = request.scope.get("route")
         endpoint = route.path if route else "unmatched"
@@ -329,7 +330,8 @@ def _resolve_quest(instance_id: str, new_status: str):
             "instance_id": instance_id,
             "quest_status": instance["status"],
         })
-        raise ApiError(400, "quest_already_resolved", f"Quest is already '{instance['status']}'")
+        # 409 Conflict: the request itself is fine, but it clashes with the quest's current state.
+        raise ApiError(409, "quest_already_resolved", f"Quest is already '{instance['status']}'")
 
     instance["status"] = new_status
     category = instance["category"]
@@ -361,14 +363,14 @@ def _resolve_quest(instance_id: str, new_status: str):
 
     return instance
 
-@app.post("/quest/{instance_id}/complete")
-def complete_quest(instance_id: str):
-    return _resolve_quest(instance_id, "completed")
+# Body of PATCH /quests/{id}: the status to move the quest to.
+# "in_progress" is not allowed here (a quest can't be un-finished); anything
+# other than these three values is rejected with 422.
+class QuestUpdate(BaseModel):
+    status: Literal["completed", "skipped", "abandoned"]
 
-@app.post("/quest/{instance_id}/skip")
-def skip_quest(instance_id: str):
-    return _resolve_quest(instance_id, "skipped")
-
-@app.post("/quest/{instance_id}/abandon")
-def abandon_quest(instance_id: str):
-    return _resolve_quest(instance_id, "abandoned")
+# Finish a quest: one endpoint on the quest itself replaces the old
+# /complete, /skip and /abandon endpoints.
+@app.patch("/quests/{instance_id}")
+def update_quest(instance_id: uuid.UUID, update: QuestUpdate):
+    return _resolve_quest(str(instance_id), update.status)

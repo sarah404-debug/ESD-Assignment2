@@ -16,9 +16,13 @@ import urllib.error
 import urllib.request
 
 
-def call(base_url, method, path):
-    """Send one request. Returns (status_code, parsed_json_or_None, seconds_taken)."""
-    request = urllib.request.Request(base_url + path, method=method)
+def call(base_url, method, path, body=None):
+    """Send one request (with an optional JSON body).
+    Returns (status_code, parsed_json_or_None, seconds_taken)."""
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(base_url + path, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
     start = time.time()
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -75,18 +79,20 @@ def main():
             if status == 201 and quest:
                 instance_id = quest["instance_id"]
                 if roll < 0.55:
-                    action, outcome = "complete", "completed"
+                    new_status, outcome = "completed", "completed"
                 elif roll < 0.75:
-                    action, outcome = "skip", "skipped"
+                    new_status, outcome = "skipped", "skipped"
                 elif roll < 0.85:
-                    action, outcome = "abandon", "abandoned"
+                    new_status, outcome = "abandoned", "abandoned"
                 elif roll < 0.95:
-                    action, outcome = None, "left open"   # stays in progress
+                    new_status, outcome = None, "left open"   # stays in progress
                 else:
-                    action, outcome = "complete", "bad id"
-                    instance_id = "fake-id"               # produces a 404 on purpose
-                if action:
-                    status, _, _ = call(args.base_url, "POST", f"/quest/{instance_id}/{action}")
+                    new_status, outcome = "completed", "bad id"
+                    # A valid UUID that no quest has, so this gives a 404 on purpose.
+                    instance_id = "00000000-0000-0000-0000-000000000000"
+                if new_status:
+                    status, _, _ = call(args.base_url, "PATCH", f"/quests/{instance_id}",
+                                        {"status": new_status})
                     record(status)
                 outcomes[outcome] += 1
 

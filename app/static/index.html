@@ -181,9 +181,9 @@
         <button class="btn-abandon" id="btnAbandon">Abandon</button>
       </div>
     `;
-    document.getElementById('btnComplete').onclick = () => resolveQuest('complete');
-    document.getElementById('btnSkip').onclick = () => resolveQuest('skip');
-    document.getElementById('btnAbandon').onclick = () => resolveQuest('abandon');
+    document.getElementById('btnComplete').onclick = () => resolveQuest('completed');
+    document.getElementById('btnSkip').onclick = () => resolveQuest('skipped');
+    document.getElementById('btnAbandon').onclick = () => resolveQuest('abandoned');
   }
 
   function renderEmpty(message) {
@@ -207,15 +207,19 @@
     }
   }
 
-  async function resolveQuest(action) {
+  async function resolveQuest(status) {
     if (!currentQuest) return;
     const id = currentQuest.instance_id;
     try {
-      const res = await fetch(`/quest/${id}/${action}`, { method: 'POST' });
+      const res = await fetch(`/quests/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
       if (!res.ok) throw await errorFrom(res);
-      sessionCounts[action === 'complete' ? 'completed' : action === 'skip' ? 'skipped' : 'abandoned']++;
+      sessionCounts[status]++;
       renderStats();
-      showToast(action === 'complete' ? '✓ Quest completed!' : action === 'skip' ? 'Skipped.' : 'Abandoned.');
+      showToast(status === 'completed' ? '✓ Quest completed!' : status === 'skipped' ? 'Skipped.' : 'Abandoned.');
       renderEmpty('Nice. Ready for the next one?');
     } catch (err) {
       showToast(String(err));
