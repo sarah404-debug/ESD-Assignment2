@@ -1,6 +1,7 @@
 import contextvars
 import json
 import logging
+import math
 import os
 import random
 import sys
@@ -10,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
-from fastapi import FastAPI, Header, Request, Response
+from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -70,21 +71,23 @@ logger.addHandler(_handler)
 # "error" is a fixed code a program can check; "request_id" matches the log line
 # for this request in Kibana.
 class ApiError(Exception):
-    """Raised by our own code for an expected problem, e.g. an unknown quest."""
-    def __init__(self, status_code: int, error: str, message: str):
+    """Raised by our own code for an expected problem, e.g. an unknown quest.
+    `headers` are extra response headers, e.g. Retry-After on a 429."""
+    def __init__(self, status_code: int, error: str, message: str, headers=None):
         self.status_code = status_code
         self.error = error
         self.message = message
+        self.headers = headers
 
-def error_response(status_code: int, error: str, message: str, details=None):
+def error_response(status_code: int, error: str, message: str, details=None, headers=None):
     body = {"error": error, "message": message, "request_id": request_id_var.get()}
     if details:
         body["details"] = details
-    return JSONResponse(status_code=status_code, content=body)
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 @app.exception_handler(ApiError)
 async def handle_api_error(request: Request, exc: ApiError):
-    return error_response(exc.status_code, exc.error, exc.message)
+    return error_response(exc.status_code, exc.error, exc.message, headers=exc.headers)
 
 # Errors FastAPI raises by itself, e.g. an unknown path (404) or the wrong method (405).
 HTTP_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
@@ -140,6 +143,52 @@ class ErrorResponse(BaseModel):
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "No quest with this ID"}}
 CONFLICT = {409: {"model": ErrorResponse, "description": "Quest is already resolved with a different status"}}
 INVALID = {422: {"model": ErrorResponse, "description": "Invalid input (bad ID, body or query value)"}}
+RATE_LIMITED = {429: {
+    "model": ErrorResponse,
+    "description": "Too many requests from this client; wait and try again",
+    "headers": {"Retry-After": {
+        "description": "Seconds to wait before the next request will be accepted",
+        "schema": {"type": "integer"},
+    }},
+}}
+
+# ── Rate limiting ───────────────────────────────────────────
+# POST /quests allows at most RATE_LIMIT_REQUESTS calls per client IP address
+# in each RATE_LIMIT_WINDOW_SECONDS window (a "fixed window": the window starts
+# at the client's first call and the count resets when it ends). Extra calls get
+# 429 Too Many Requests with a Retry-After header saying when to come back.
+# Counts live in this process's memory, so this works for a single instance.
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "30"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "10"))
+
+_rate_windows = {}  # client IP -> [window start time, calls accepted in this window]
+_rate_lock = threading.Lock()
+
+def rate_limit_create(request: Request, response: Response):
+    client = request.client.host if request.client else "unknown"
+    now = time.time()
+    with _rate_lock:
+        window = _rate_windows.get(client)
+        if window is None or now - window[0] >= RATE_LIMIT_WINDOW_SECONDS:
+            window = [now, 0]  # first call, or the old window ended: start a new one
+            _rate_windows[client] = window
+
+        if window[1] >= RATE_LIMIT_REQUESTS:
+            retry_after = max(1, math.ceil(window[0] + RATE_LIMIT_WINDOW_SECONDS - now))
+            logger.warning("rate limit exceeded", extra={"event": "rate_limited", "endpoint": "/quests"})
+            raise ApiError(
+                429, "rate_limited",
+                f"Too many requests: limit is {RATE_LIMIT_REQUESTS} per {RATE_LIMIT_WINDOW_SECONDS}s. "
+                f"Try again in {retry_after}s.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        window[1] += 1
+        remaining = RATE_LIMIT_REQUESTS - window[1]
+
+    # Let accepted callers see how many calls they have left in this window.
+    response.headers["RateLimit-Limit"] = str(RATE_LIMIT_REQUESTS)
+    response.headers["RateLimit-Remaining"] = str(remaining)
 
 # ── Fault injection switch (Part E1) ───────────────────────
 # Off by default. To turn on, set these two environment variables (see
@@ -305,11 +354,14 @@ def metrics():
 # caller that may retry sends an Idempotency-Key header (any unique value, e.g. a
 # UUID). The first request with a key creates the quest; any repeat with the same
 # key gets that same quest back instead of a second one.
+#
+# Rate limited: see rate_limit_create above. The check runs before this function.
 @app.post(
     "/quests",
     status_code=201,
     response_model=Quest,
     summary="Create a new quest",
+    dependencies=[Depends(rate_limit_create)],
     responses={
         201: {
             "description": "Quest created (or, for a repeated Idempotency-Key, the quest that key already created)",
@@ -322,9 +374,18 @@ def metrics():
                     "description": "\"true\" when this is a repeat of an earlier request with the same Idempotency-Key",
                     "schema": {"type": "string"},
                 },
+                "RateLimit-Limit": {
+                    "description": "Calls allowed per window for this client",
+                    "schema": {"type": "integer"},
+                },
+                "RateLimit-Remaining": {
+                    "description": "Calls this client has left in the current window",
+                    "schema": {"type": "integer"},
+                },
             },
         },
         **INVALID,
+        **RATE_LIMITED,
     },
 )
 def create_quest(

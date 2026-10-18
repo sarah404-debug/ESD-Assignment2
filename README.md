@@ -104,6 +104,17 @@ python scripts\export_openapi.py
   Turn it off again the same way with both values set to `0` (or just
   `docker compose up -d quest-app` with the variables unset, since the
   compose file defaults them to `0`).
+- **Rate limiting:** `POST /quests` accepts at most 30 calls per client IP
+  address in each 10-second window. Call 31 onwards gets `429 Too Many
+  Requests` with a `Retry-After` header (seconds until the window ends).
+  Accepted calls show `RateLimit-Remaining`. Quick demo:
+  ```
+  python scripts\rate_limit_demo.py
+  ```
+  Change the limit with `RATE_LIMIT_REQUESTS` and
+  `RATE_LIMIT_WINDOW_SECONDS` (same way as the fault-injection variables).
+  The load generator's default `--rate 2` (20 calls per 10 s) stays well
+  inside the limit.
 
 ## Safely clean up
 

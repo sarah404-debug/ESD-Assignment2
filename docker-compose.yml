@@ -7,6 +7,9 @@ services:
     environment:
       - FAULT_DELAY_MS=${FAULT_DELAY_MS:-0}
       - FAULT_EVERY_N=${FAULT_EVERY_N:-0}
+      # Rate limit for POST /quests: this many calls per client IP per window.
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-30}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-10}
     # Docker keeps the app's stdout (our JSON logs) in a json-file on disk.
     # These options cap it at 3 files of 10 MB each, so old container logs get rotated out.
     logging:

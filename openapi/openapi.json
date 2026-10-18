@@ -71,11 +71,41 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "description": "Calls allowed per window for this client",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "description": "Calls this client has left in the current window",
+                "schema": {
+                  "type": "integer"
+                }
               }
             }
           },
           "422": {
             "description": "Invalid input (bad ID, body or query value)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests from this client; wait and try again",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before the next request will be accepted",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
