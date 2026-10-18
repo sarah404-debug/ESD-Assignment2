@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quest App</title>
+<style>
+  :root {
+    --bg-1: #6d5bd0;
+    --bg-2: #8f6fe0;
+    --card: #ffffff;
+    --ink: #241f3d;
+    --muted: #6b6685;
+    --accent: #6d5bd0;
+    --good: #2fb380;
+    --warn: #e0a13c;
+    --bad: #e0596b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, var(--bg-1), var(--bg-2));
+    padding: 24px;
+  }
+  .app {
+    width: 100%;
+    max-width: 420px;
+  }
+  h1 {
+    color: #fff;
+    text-align: center;
+    font-size: 1.4rem;
+    margin: 0 0 20px;
+    letter-spacing: 0.02em;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 18px;
+    padding: 28px 24px;
+    box-shadow: 0 20px 40px rgba(30, 20, 60, 0.25);
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: transform 0.15s ease;
+  }
+  .badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.category { background: #ece9fb; color: var(--accent); }
+  .badge.difficulty.easy { background: #e3f7ee; color: var(--good); }
+  .badge.difficulty.medium { background: #fbf1e0; color: var(--warn); }
+  .badge.difficulty.hard { background: #fbe6e9; color: var(--bad); }
+  .quest-text {
+    font-size: 1.15rem;
+    color: var(--ink);
+    line-height: 1.5;
+    flex-grow: 1;
+  }
+  .empty {
+    color: var(--muted);
+    font-size: 0.95rem;
+    margin: auto 0;
+    text-align: center;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  button {
+    border: none;
+    border-radius: 10px;
+    padding: 11px 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.05s ease;
+  }
+  button:active { transform: scale(0.96); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-complete { background: var(--good); color: #fff; }
+  .btn-skip { background: #edeaf9; color: var(--ink); }
+  .btn-abandon { background: #fbe6e9; color: var(--bad); }
+  .new-quest {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    padding: 13px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+  }
+  .toast {
+    margin-top: 14px;
+    text-align: center;
+    color: #fff;
+    font-size: 0.85rem;
+    min-height: 18px;
+    opacity: 0.9;
+  }
+  .stats {
+    margin-top: 16px;
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    color: rgba(255,255,255,0.85);
+    font-size: 0.78rem;
+  }
+  .stats span b { color: #fff; font-size: 0.95rem; display: block; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <h1>🗺️ Quest App</h1>
+    <div class="card" id="card">
+      <div class="empty" id="emptyState">Loading your first quest…</div>
+    </div>
+    <button class="new-quest" id="newQuestBtn" style="margin-top:14px;">Get a new quest</button>
+    <div class="toast" id="toast"></div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+<script>
+  const cardEl = document.getElementById('card');
+  const toastEl = document.getElementById('toast');
+  const statsEl = document.getElementById('stats');
+  const newQuestBtn = document.getElementById('newQuestBtn');
+
+  let currentQuest = null;
+  const sessionCounts = { completed: 0, skipped: 0, abandoned: 0 };
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    setTimeout(() => { if (toastEl.textContent === msg) toastEl.textContent = ''; }, 2500);
+  }
+
+  function renderStats() {
+    statsEl.innerHTML = `
+      <span><b>${sessionCounts.completed}</b>Completed</span>
+      <span><b>${sessionCounts.skipped}</b>Skipped</span>
+      <span><b>${sessionCounts.abandoned}</b>Abandoned</span>
+    `;
+  }
+
+  function renderQuest(quest) {
+    currentQuest = quest;
+    cardEl.innerHTML = `
+      <div class="badges">
+        <span class="badge category">${quest.category}</span>
+        <span class="badge difficulty ${quest.difficulty}">${quest.difficulty}</span>
+      </div>
+      <div class="quest-text">${quest.text ?? quest.quest_text ?? 'New quest ready.'}</div>
+      <div class="actions">
+        <button class="btn-complete" id="btnComplete">Complete</button>
+        <button class="btn-skip" id="btnSkip">Skip</button>
+        <button class="btn-abandon" id="btnAbandon">Abandon</button>
+      </div>
+    `;
+    document.getElementById('btnComplete').onclick = () => resolveQuest('complete');
+    document.getElementById('btnSkip').onclick = () => resolveQuest('skip');
+    document.getElementById('btnAbandon').onclick = () => resolveQuest('abandon');
+  }
+
+  function renderEmpty(message) {
+    currentQuest = null;
+    cardEl.innerHTML = `<div class="empty">${message}</div>`;
+  }
+
+  async function fetchNewQuest() {
+    newQuestBtn.disabled = true;
+    renderEmpty('Fetching a quest…');
+    try {
+      const res = await fetch('/quest/new');
+      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      const quest = await res.json();
+      renderQuest(quest);
+    } catch (err) {
+      renderEmpty('Could not reach the app. Is it running?');
+      showToast(String(err));
+    } finally {
+      newQuestBtn.disabled = false;
+    }
+  }
+
+  async function resolveQuest(action) {
+    if (!currentQuest) return;
+    const id = currentQuest.instance_id;
+    try {
+      const res = await fetch(`/quest/${id}/${action}`, { method: 'POST' });
+      if (!res.ok) throw new Error('Request failed: ' + res.status);
+      sessionCounts[action === 'complete' ? 'completed' : action === 'skip' ? 'skipped' : 'abandoned']++;
+      renderStats();
+      showToast(action === 'complete' ? '✓ Quest completed!' : action === 'skip' ? 'Skipped.' : 'Abandoned.');
+      renderEmpty('Nice. Ready for the next one?');
+    } catch (err) {
+      showToast(String(err));
+    }
+  }
+
+  newQuestBtn.onclick = fetchNewQuest;
+  renderStats();
+  fetchNewQuest();
+</script>
+</body>
+</html>
