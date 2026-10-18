@@ -5,6 +5,10 @@ no installs needed).
 
 Protection against a slow or broken Quest App:
   - Timeout: give up on any single request after TIMEOUT_SECONDS.
+  - Retry with backoff: if a request fails with a transient error, try again
+    up to MAX_ATTEMPTS times in total, waiting longer before each new try.
+    This is only safe because every retry sends the same Idempotency-Key, so
+    the app never creates a second quest for the same call.
 
 Run from the project folder while the app is running:
     python clients/quest_caller.py
@@ -20,6 +24,8 @@ import uuid
 
 # ── Settings ────────────────────────────────────────────────
 TIMEOUT_SECONDS = 2.0  # longest we wait for one response before giving up
+MAX_ATTEMPTS = 3       # 1 first try + up to 2 retries
+BACKOFF_SECONDS = 0.5  # wait before retry 1; doubles each time (0.5 s, then 1 s)
 
 
 # ── Errors ──────────────────────────────────────────────────
@@ -65,6 +71,30 @@ def create_quest(base_url, idempotency_key):
         raise TransientError(f"cannot reach the app ({error.reason})")
 
 
+# ── Retry with backoff ──────────────────────────────────────
+def create_quest_with_retry(base_url, idempotency_key, log):
+    """Call create_quest, retrying transient failures with growing waits.
+
+    Every attempt uses the SAME idempotency_key, so if an earlier attempt
+    actually reached the app (e.g. it timed out on our side but the app still
+    created the quest), the retry gets that same quest back, not a duplicate.
+    Permanent errors are not retried: trying again would not help.
+    """
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            quest = create_quest(base_url, idempotency_key)
+            if attempt > 1:
+                log(f"attempt {attempt} succeeded")
+            return quest
+        except TransientError as error:
+            if attempt == MAX_ATTEMPTS:
+                log(f"attempt {attempt} failed: {error}; no retries left")
+                raise
+            wait = BACKOFF_SECONDS * 2 ** (attempt - 1)  # 0.5 s, 1 s, ...
+            log(f"attempt {attempt} failed: {error}; retrying in {wait:g}s")
+            time.sleep(wait)
+
+
 # ── Main ────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description="Call the Quest App like another service would")
@@ -74,14 +104,19 @@ def main():
     args = parser.parse_args()
 
     print(f"Calling POST {args.base_url}/quests {args.calls} times "
-          f"(timeout {TIMEOUT_SECONDS}s)\n")
+          f"(timeout {TIMEOUT_SECONDS}s, up to {MAX_ATTEMPTS} attempts, "
+          f"backoff from {BACKOFF_SECONDS}s doubling)\n")
 
     results = {"ok": 0, "failed": 0}
     for number in range(1, args.calls + 1):
-        key = str(uuid.uuid4())  # one key per quest we want
+        key = str(uuid.uuid4())  # one key per quest we want, reused by its retries
         start = time.time()
+
+        def log(message, number=number):
+            print(f"call {number:>2}:         {message}")
+
         try:
-            quest = create_quest(args.base_url, key)
+            quest = create_quest_with_retry(args.base_url, key, log)
             took_ms = (time.time() - start) * 1000
             print(f"call {number:>2}: OK      quest {quest['instance_id'][:8]} "
                   f"({quest['category']}, {quest['difficulty']}) in {took_ms:.0f} ms")
