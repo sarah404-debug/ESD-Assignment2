@@ -57,7 +57,16 @@ curl -X PATCH http://127.0.0.1:8000/quests/00000000-0000-0000-0000-000000000000 
 curl -X PATCH http://127.0.0.1:8000/quests/{instance_id} -H "Content-Type: application/json" -d "{\"status\":\"banana\"}"
 ```
 The first returns `404` (no such quest), the second `422` (status not
-allowed). Resolving an already-resolved quest returns `409`.
+allowed). Resolving a quest to a *different* status than it already has
+returns `409`; sending the same status again is safe and returns `200`.
+
+Safe retries of quest creation: send an `Idempotency-Key` header. Repeating
+the request with the same key returns the same quest (with header
+`Idempotent-Replayed: true`) instead of creating a second one:
+```
+curl -i -X POST http://127.0.0.1:8000/quests -H "Idempotency-Key: my-key-1"
+curl -i -X POST http://127.0.0.1:8000/quests -H "Idempotency-Key: my-key-1"
+```
 
 For a steady stream of realistic traffic instead of manual clicking, use the
 load generator (standard library only, no installs):

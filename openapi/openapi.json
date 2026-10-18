@@ -26,9 +26,32 @@
       "post": {
         "summary": "Create a new quest",
         "operationId": "create_quest_quests_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional unique value; repeating a request with the same key will not create a second quest",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional unique value; repeating a request with the same key will not create a second quest"
+          }
+        ],
         "responses": {
           "201": {
-            "description": "Quest created",
+            "description": "Quest created (or, for a repeated Idempotency-Key, the quest that key already created)",
             "content": {
               "application/json": {
                 "schema": {
@@ -38,9 +61,25 @@
             },
             "headers": {
               "Location": {
-                "description": "Address of the new quest, e.g. /quests/{instance_id}",
+                "description": "Address of the quest, e.g. /quests/{instance_id}",
                 "schema": {
                   "type": "string"
+                }
+              },
+              "Idempotent-Replayed": {
+                "description": "\"true\" when this is a repeat of an earlier request with the same Idempotency-Key",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input (bad ID, body or query value)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -198,7 +237,7 @@
             }
           },
           "409": {
-            "description": "Quest is already resolved",
+            "description": "Quest is already resolved with a different status",
             "content": {
               "application/json": {
                 "schema": {

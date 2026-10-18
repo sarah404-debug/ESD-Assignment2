@@ -4,12 +4,13 @@ import logging
 import os
 import random
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
-from fastapi import FastAPI, Request, Response
+from typing import Annotated, Literal
+from fastapi import FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -137,7 +138,7 @@ class ErrorResponse(BaseModel):
 
 # Error responses listed in the spec, so readers see the error codes each endpoint can return.
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "No quest with this ID"}}
-CONFLICT = {409: {"model": ErrorResponse, "description": "Quest is already resolved"}}
+CONFLICT = {409: {"model": ErrorResponse, "description": "Quest is already resolved with a different status"}}
 INVALID = {422: {"model": ErrorResponse, "description": "Invalid input (bad ID, body or query value)"}}
 
 # ── Fault injection switch (Part E1) ───────────────────────
@@ -159,6 +160,12 @@ QUESTS = [
 ]
 
 quest_instances = {}
+
+# Idempotency-Key -> instance_id of the quest that key created (see POST /quests).
+idempotency_keys = {}
+# Only one request at a time may check a key and create a quest, so two copies
+# of the same request arriving together can't both create one.
+_create_lock = threading.Lock()
 
 # ── Metrics ─────────────────────────────────────────────────
 # COUNTER: something that only ever goes up.
@@ -293,20 +300,40 @@ def metrics():
 
 # Creating a quest changes data, so it is a POST (not a GET) on the /quests
 # collection. It answers 201 Created and a Location header with the new quest's address.
+#
+# Idempotency: POST is not safe to repeat (each call makes a new quest), so a
+# caller that may retry sends an Idempotency-Key header (any unique value, e.g. a
+# UUID). The first request with a key creates the quest; any repeat with the same
+# key gets that same quest back instead of a second one.
 @app.post(
     "/quests",
     status_code=201,
     response_model=Quest,
     summary="Create a new quest",
-    responses={201: {
-        "description": "Quest created",
-        "headers": {"Location": {
-            "description": "Address of the new quest, e.g. /quests/{instance_id}",
-            "schema": {"type": "string"},
-        }},
-    }},
+    responses={
+        201: {
+            "description": "Quest created (or, for a repeated Idempotency-Key, the quest that key already created)",
+            "headers": {
+                "Location": {
+                    "description": "Address of the quest, e.g. /quests/{instance_id}",
+                    "schema": {"type": "string"},
+                },
+                "Idempotent-Replayed": {
+                    "description": "\"true\" when this is a repeat of an earlier request with the same Idempotency-Key",
+                    "schema": {"type": "string"},
+                },
+            },
+        },
+        **INVALID,
+    },
 )
-def create_quest(response: Response):
+def create_quest(
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(
+        min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$",
+        description="Optional unique value; repeating a request with the same key will not create a second quest",
+    )] = None,
+):
     global _fault_request_count
 
     # Fault injection (Part E1): if enabled, delay every Nth call to this
@@ -319,6 +346,27 @@ def create_quest(response: Response):
         if _fault_request_count % FAULT_EVERY_N == 0:
             time.sleep(FAULT_DELAY_MS / 1000)
 
+    with _create_lock:
+        # Seen this key before? Return the quest it already created; change nothing.
+        if idempotency_key is not None and idempotency_key in idempotency_keys:
+            instance_id = idempotency_keys[idempotency_key]
+            logger.info("repeated create request, returning existing quest", extra={
+                "event": "quest_create_replayed",
+                "instance_id": instance_id,
+            })
+            response.headers["Location"] = f"/quests/{instance_id}"
+            response.headers["Idempotent-Replayed"] = "true"
+            return quest_instances[instance_id]
+
+        instance = _new_quest()
+        if idempotency_key is not None:
+            idempotency_keys[idempotency_key] = instance["instance_id"]
+
+    response.headers["Location"] = f"/quests/{instance['instance_id']}"
+    return instance
+
+def _new_quest():
+    """Pick a random quest, store it as in progress, and record metrics and a log line."""
     start_time = time.time()  # mark when we started, so we can measure duration
 
     quest = random.choice(QUESTS)
@@ -348,7 +396,6 @@ def create_quest(response: Response):
         "difficulty": quest["difficulty"],
     })
 
-    response.headers["Location"] = f"/quests/{instance_id}"
     return quest_instances[instance_id]
 
 # List all quests. Optional filter, e.g. GET /quests?status=in_progress
@@ -383,6 +430,17 @@ def _resolve_quest(instance_id: str, new_status: str):
 
     instance = quest_instances[instance_id]
 
+    # Idempotency: asking for the status the quest already has (e.g. a retry of a
+    # request that already worked) changes nothing and counts nothing twice.
+    if instance["status"] == new_status:
+        logger.info("quest already has the requested status", extra={
+            "event": "quest_resolve_repeated",
+            "instance_id": instance_id,
+            "quest_status": new_status,
+        })
+        return instance
+
+    # A *different* final status is a real conflict, e.g. skipping a completed quest.
     if instance["status"] != "in_progress":
         logger.warning("quest already resolved", extra={
             "event": "quest_already_resolved",
