@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -292,6 +293,26 @@ def create_quest(response: Response):
     response.headers["Location"] = f"/quests/{instance_id}"
     return quest_instances[instance_id]
 
+# The only values a quest's status can have. FastAPI rejects anything else with 422.
+QuestStatus = Literal["in_progress", "completed", "skipped", "abandoned"]
+
+# List all quests. Optional filter, e.g. GET /quests?status=in_progress
+@app.get("/quests")
+def list_quests(status: QuestStatus | None = None):
+    quests = quest_instances.values()
+    if status is not None:
+        quests = [q for q in quests if q["status"] == status]
+    return list(quests)
+
+# Look at one quest. instance_id must be a valid UUID; FastAPI rejects
+# anything else (e.g. "abc") with 422 before this function runs.
+@app.get("/quests/{instance_id}")
+def get_quest(instance_id: uuid.UUID):
+    instance = quest_instances.get(str(instance_id))
+    if instance is None:
+        raise ApiError(404, "quest_not_found", "Quest instance not found")
+    return instance
+
 def _resolve_quest(instance_id: str, new_status: str):
     if instance_id not in quest_instances:
         logger.warning("quest not found", extra={
@@ -351,7 +372,3 @@ def skip_quest(instance_id: str):
 @app.post("/quest/{instance_id}/abandon")
 def abandon_quest(instance_id: str):
     return _resolve_quest(instance_id, "abandoned")
-
-@app.get("/quest/status")
-def quest_status():
-    return list(quest_instances.values())

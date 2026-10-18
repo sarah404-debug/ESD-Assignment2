@@ -41,6 +41,12 @@ Create a quest (returns `201 Created`):
 ```
 curl -X POST http://127.0.0.1:8000/quests
 ```
+See all quests, only some of them, or one quest:
+```
+curl http://127.0.0.1:8000/quests
+curl "http://127.0.0.1:8000/quests?status=in_progress"
+curl http://127.0.0.1:8000/quests/{instance_id}
+```
 Resolve a quest:
 ```
 curl -X POST http://127.0.0.1:8000/quest/{instance_id}/complete
