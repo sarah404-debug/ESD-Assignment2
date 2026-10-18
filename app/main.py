@@ -17,7 +17,13 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
-app = FastAPI()
+# title/version/description appear at the top of the OpenAPI spec (/openapi.json)
+# and the interactive docs page (/docs).
+app = FastAPI(
+    title="Quest App API",
+    version="2.0.0",
+    description="Get small real-life side quests and record whether you completed, skipped or abandoned them.",
+)
 
 # Serve the small one-page UI (app/static/index.html) at /ui.
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
@@ -95,6 +101,44 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
         for e in exc.errors()
     ]
     return error_response(422, "validation_error", "The request has invalid input.", details)
+
+# ── API models ──────────────────────────────────────────────
+# These describe the JSON that goes in and out of the API. FastAPI uses them
+# to validate input and to build the OpenAPI spec, so the spec always matches the code.
+
+# The only values a quest's status can have. FastAPI rejects anything else with 422.
+QuestStatus = Literal["in_progress", "completed", "skipped", "abandoned"]
+
+class Quest(BaseModel):
+    instance_id: uuid.UUID
+    quest_id: int
+    category: str
+    difficulty: str
+    text: str
+    status: QuestStatus
+    created_at: float  # Unix timestamp (seconds)
+
+# Body of PATCH /quests/{id}: the status to move the quest to.
+# "in_progress" is not allowed here (a quest can't be un-finished); anything
+# other than these three values is rejected with 422.
+class QuestUpdate(BaseModel):
+    status: Literal["completed", "skipped", "abandoned"]
+
+class ErrorDetail(BaseModel):
+    field: str
+    problem: str
+
+# The shape every error has (see "Errors" above).
+class ErrorResponse(BaseModel):
+    error: str
+    message: str
+    request_id: str
+    details: list[ErrorDetail] | None = None
+
+# Error responses listed in the spec, so readers see the error codes each endpoint can return.
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "No quest with this ID"}}
+CONFLICT = {409: {"model": ErrorResponse, "description": "Quest is already resolved"}}
+INVALID = {422: {"model": ErrorResponse, "description": "Invalid input (bad ID, body or query value)"}}
 
 # ── Fault injection switch (Part E1) ───────────────────────
 # Off by default. To turn on, set these two environment variables (see
@@ -238,17 +282,30 @@ async def track_requests(request: Request, call_next):
     return response
 
 # ── Endpoints ───────────────────────────────────────────────
-@app.get("/")
+@app.get("/", summary="Health check")
 def read_root():
     return {"message": "Hello, quester!"}
 
-@app.get("/metrics")
+# Left out of the OpenAPI spec: it is for Prometheus, not for API callers.
+@app.get("/metrics", include_in_schema=False)
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # Creating a quest changes data, so it is a POST (not a GET) on the /quests
 # collection. It answers 201 Created and a Location header with the new quest's address.
-@app.post("/quests", status_code=201)
+@app.post(
+    "/quests",
+    status_code=201,
+    response_model=Quest,
+    summary="Create a new quest",
+    responses={201: {
+        "description": "Quest created",
+        "headers": {"Location": {
+            "description": "Address of the new quest, e.g. /quests/{instance_id}",
+            "schema": {"type": "string"},
+        }},
+    }},
+)
 def create_quest(response: Response):
     global _fault_request_count
 
@@ -294,11 +351,8 @@ def create_quest(response: Response):
     response.headers["Location"] = f"/quests/{instance_id}"
     return quest_instances[instance_id]
 
-# The only values a quest's status can have. FastAPI rejects anything else with 422.
-QuestStatus = Literal["in_progress", "completed", "skipped", "abandoned"]
-
 # List all quests. Optional filter, e.g. GET /quests?status=in_progress
-@app.get("/quests")
+@app.get("/quests", response_model=list[Quest], summary="List quests", responses=INVALID)
 def list_quests(status: QuestStatus | None = None):
     quests = quest_instances.values()
     if status is not None:
@@ -307,7 +361,12 @@ def list_quests(status: QuestStatus | None = None):
 
 # Look at one quest. instance_id must be a valid UUID; FastAPI rejects
 # anything else (e.g. "abc") with 422 before this function runs.
-@app.get("/quests/{instance_id}")
+@app.get(
+    "/quests/{instance_id}",
+    response_model=Quest,
+    summary="Get one quest",
+    responses={**NOT_FOUND, **INVALID},
+)
 def get_quest(instance_id: uuid.UUID):
     instance = quest_instances.get(str(instance_id))
     if instance is None:
@@ -363,14 +422,13 @@ def _resolve_quest(instance_id: str, new_status: str):
 
     return instance
 
-# Body of PATCH /quests/{id}: the status to move the quest to.
-# "in_progress" is not allowed here (a quest can't be un-finished); anything
-# other than these three values is rejected with 422.
-class QuestUpdate(BaseModel):
-    status: Literal["completed", "skipped", "abandoned"]
-
 # Finish a quest: one endpoint on the quest itself replaces the old
 # /complete, /skip and /abandon endpoints.
-@app.patch("/quests/{instance_id}")
+@app.patch(
+    "/quests/{instance_id}",
+    response_model=Quest,
+    summary="Resolve a quest (complete, skip or abandon)",
+    responses={**NOT_FOUND, **CONFLICT, **INVALID},
+)
 def update_quest(instance_id: uuid.UUID, update: QuestUpdate):
     return _resolve_quest(str(instance_id), update.status)

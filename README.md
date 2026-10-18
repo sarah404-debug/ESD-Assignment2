@@ -66,6 +66,19 @@ python scripts\load_test.py --duration 60 --rate 2
 ```
 `--seed` makes runs repeatable (same seed = same sequence of outcomes).
 
+## OpenAPI
+
+The API is described by an OpenAPI spec, saved in `openapi/openapi.json`.
+FastAPI builds it from the code, and the running app also serves it at
+http://127.0.0.1:8000/openapi.json. To try endpoints from the spec, open
+http://127.0.0.1:8000/docs, pick an endpoint, click **Try it out**, then
+**Execute**.
+
+After changing an endpoint, regenerate the saved file:
+```
+python scripts\export_openapi.py
+```
+
 ## Test
 
 - **Dashboards:** open the "Quest App Dashboard" in Grafana for metrics
