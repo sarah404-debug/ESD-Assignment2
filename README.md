@@ -115,6 +115,29 @@ python scripts\export_openapi.py
   `RATE_LIMIT_WINDOW_SECONDS` (same way as the fault-injection variables).
   The load generator's default `--rate 2` (20 calls per 10 s) stays well
   inside the limit.
+- **Python caller (timeout, retry, circuit breaker):**
+  `clients/quest_caller.py` calls `POST /quests` like another service would.
+  Settings: timeout 2 s; up to 3 attempts with backoff 0.5 s then 1 s (only
+  transient failures are retried, always with the same `Idempotency-Key`);
+  circuit breaker opens after 5 failed requests in a row and lets a trial
+  request through after 10 s.
+  ```
+  python clients\quest_caller.py
+  ```
+  Full demo (success, retry, breaker open, recovery):
+  1. Make every 4th create slow, so some requests time out and get retried:
+     ```
+     set FAULT_DELAY_MS=3000
+     set FAULT_EVERY_N=4
+     docker compose up -d quest-app
+     ```
+  2. Start the caller: `python clients\quest_caller.py --calls 40 --interval 1`
+  3. After about 8 s, in a second terminal: `docker compose stop quest-app`
+     (the caller's requests fail, then the breaker opens and blocks calls).
+  4. About 25 s later: `docker compose start quest-app` (the next trial
+     request succeeds and the breaker closes).
+  5. Afterwards, turn the fault off again (set both values to `0` and run
+     `docker compose up -d quest-app`).
 
 ## Safely clean up
 
