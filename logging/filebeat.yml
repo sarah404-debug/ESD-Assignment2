@@ -11,12 +11,17 @@ processors:
   - add_docker_metadata:
       host: "unix:///var/run/docker.sock"
 
-  # Only keep logs from the quest-app container.
+  # Only keep logs from the quest-app service of this project ("esd-a2").
+  # Docker Compose labels every container with its project and service name
+  # (the dots in label names become underscores here).
   - drop_event:
       when:
         not:
-          equals:
-            container.name: "quest-app"
+          and:
+            - equals:
+                container.labels.com_docker_compose_project: "esd-a2"
+            - equals:
+                container.labels.com_docker_compose_service: "quest-app"
 
   # The app writes one JSON object per line. Parse it into fields under "app.*".
   # (Under a prefix so our field names, like "service" and "event", don't clash

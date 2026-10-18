@@ -1,7 +1,10 @@
+# Project name: keeps these containers separate from the Assignment 1 ones
+# (Docker Desktop shows them grouped under "esd-a2").
+name: esd-a2
+
 services:
   quest-app:
     build: .
-    container_name: quest-app
     ports:
       - "8000:8000"
     environment:
@@ -20,7 +23,6 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -30,7 +32,6 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    container_name: grafana
     ports:
       - "3000:3000"
     environment:
@@ -41,7 +42,6 @@ services:
 
   node-exporter:
     image: prom/node-exporter:latest
-    container_name: node-exporter
     ports:
       - "9100:9100"
     volumes:
@@ -55,7 +55,6 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-    container_name: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false      # local demo only, no login needed
@@ -68,7 +67,6 @@ services:
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.15.0
-    container_name: kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     ports:
@@ -78,7 +76,6 @@ services:
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.15.0
-    container_name: filebeat
     user: root
     command: filebeat -e --strict.perms=false
     volumes:
