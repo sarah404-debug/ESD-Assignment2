@@ -4,6 +4,11 @@ It talks to the gRPC service through the generated stub (questpb/quest_pb2_grpc.
 not through the HTTP app. Every call has a deadline: if the server has not
 answered in time, gRPC cancels the call with DEADLINE_EXCEEDED.
 
+Trace correlation: each run makes one request ID (or uses --request-id) and
+sends it to both services, as the X-Request-ID header on the HTTP call (--new)
+and as x-request-id metadata on the gRPC call. Both services put it on their
+log lines, so searching that ID in Kibana shows the whole task.
+
 Examples (run from the project folder, with the venv's Python):
     python clients/grpc_client.py 0b614e9e-2f05-4061-93df-07b4c70a63a4 completed
     python clients/grpc_client.py --new skipped          # create a quest over HTTP first
@@ -15,6 +20,7 @@ import json
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 import grpc
@@ -31,12 +37,14 @@ OUTCOMES = {
 }
 
 
-def create_quest_over_http(http_url):
+def create_quest_over_http(http_url, request_id):
     """Helper for --new: make a fresh quest with HTTP POST /quests and return its ID."""
-    request = urllib.request.Request(http_url + "/quests", method="POST")
+    request = urllib.request.Request(http_url + "/quests", method="POST",
+                                     headers={"X-Request-ID": request_id})
     with urllib.request.urlopen(request, timeout=5) as response:
         quest = json.loads(response.read())
-    print(f"(HTTP POST /quests created quest {quest['instance_id']})")
+        echoed = response.headers.get("X-Request-ID")
+    print(f"(HTTP POST /quests created quest {quest['instance_id']}, X-Request-ID={echoed})")
     return quest["instance_id"]
 
 
@@ -48,10 +56,14 @@ def main():
     parser.add_argument("--target", default="localhost:50051", help="gRPC server address")
     parser.add_argument("--http-url", default="http://127.0.0.1:8000", help="HTTP app, only used by --new")
     parser.add_argument("--deadline", type=float, default=2.0, help="seconds to wait for the answer")
+    parser.add_argument("--request-id", default=None, help="request ID to send (default: a new one)")
     args = parser.parse_args()
 
+    request_id = args.request_id or uuid.uuid4().hex[:12]
+    print(f"request ID for this run: {request_id}")
+
     if args.new:
-        instance_id = create_quest_over_http(args.http_url)
+        instance_id = create_quest_over_http(args.http_url, request_id)
     elif args.instance_id:
         instance_id = args.instance_id
     else:
@@ -65,7 +77,9 @@ def main():
         stub = quest_pb2_grpc.QuestServiceStub(channel)  # the generated client stub
         start = time.time()
         try:
-            response = stub.ResolveQuest(request, timeout=args.deadline)
+            # with_call also returns the call, so we can read the server's metadata.
+            response, call = stub.ResolveQuest.with_call(
+                request, timeout=args.deadline, metadata=(("x-request-id", request_id),))
         except grpc.RpcError as error:
             took_ms = (time.time() - start) * 1000
             print(f"FAILED  status={error.code().name}  ({took_ms:.0f} ms)")
@@ -73,8 +87,9 @@ def main():
             sys.exit(1)
 
     took_ms = (time.time() - start) * 1000
+    echoed = dict(call.initial_metadata()).get("x-request-id")
     quest = response.quest
-    print(f"OK      status=OK  ({took_ms:.0f} ms)")
+    print(f"OK      status=OK  ({took_ms:.0f} ms)  server x-request-id={echoed}")
     print(f"        quest {quest.instance_id}: {quest.status} "
           f"({quest.category}, {quest.difficulty}) \"{quest.text}\"")
     print(f"        changed={response.changed}"

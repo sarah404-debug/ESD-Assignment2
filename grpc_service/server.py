@@ -13,14 +13,13 @@ import logging
 import os
 import signal
 import time
-import uuid
 from concurrent import futures
 
 import grpc
 
 from questpb import quest_pb2, quest_pb2_grpc
 from quest_core import rules
-from quest_core.jsonlog import get_logger, request_id_var
+from quest_core.jsonlog import get_logger, pick_request_id, request_id_var
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
@@ -51,64 +50,106 @@ class QuestService(quest_pb2_grpc.QuestServiceServicer):
     """The server handler: fills in the method the generated base class leaves empty."""
 
     def ResolveQuest(self, request, context):
-        request_id_var.set(uuid.uuid4().hex[:12])
-        start = time.time()
-        code = grpc.StatusCode.OK
+        status = OUTCOME_TO_STATUS.get(request.outcome)
+        if status is None:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                          "outcome must be OUTCOME_COMPLETED, OUTCOME_SKIPPED or OUTCOME_ABANDONED")
+
+        # The same rules the HTTP app uses; their errors become gRPC status codes.
         try:
-            status = OUTCOME_TO_STATUS.get(request.outcome)
-            if status is None:
-                code = grpc.StatusCode.INVALID_ARGUMENT
-                context.abort(code, "outcome must be OUTCOME_COMPLETED, OUTCOME_SKIPPED or OUTCOME_ABANDONED")
-
-            # The same rules the HTTP app uses; their errors become gRPC status codes.
-            try:
-                quest, changed = rules.resolve_quest(request.instance_id, status)
-            except rules.InvalidInput as error:
-                code = grpc.StatusCode.INVALID_ARGUMENT
-                context.abort(code, str(error))
-            except rules.QuestNotFound as error:
-                code = grpc.StatusCode.NOT_FOUND
-                context.abort(code, str(error))
-            except rules.QuestAlreadyResolved as error:
-                code = grpc.StatusCode.FAILED_PRECONDITION
-                context.abort(code, str(error))
-
-            logger.info(
-                "quest resolved" if changed else "quest already has the requested status",
-                extra={
-                    "event": "quest_resolved" if changed else "quest_resolve_repeated",
-                    "instance_id": quest["instance_id"],
-                    "category": quest["category"],
-                    "difficulty": quest["difficulty"],
-                    "quest_status": quest["status"],
-                },
-            )
-            return quest_pb2.ResolveQuestResponse(quest=_to_message(quest), changed=changed)
-        except Exception:
-            if code == grpc.StatusCode.OK:  # not one of our own aborts: a real bug
-                code = grpc.StatusCode.INTERNAL
-                logger.exception("unhandled exception", extra={"event": "unhandled_exception"})
-                context.abort(code, "Something went wrong on the server.")
-            raise
-        finally:
-            # One line per call, like the HTTP app's "request completed".
-            # INFO for OK, WARNING for client errors, ERROR for server errors (as in the HTTP app).
-            if code == grpc.StatusCode.INTERNAL:
-                level = logging.ERROR
-            elif code != grpc.StatusCode.OK:
-                level = logging.WARNING
-            else:
-                level = logging.INFO
-            logger.log(level, "rpc completed", extra={
-                "event": "rpc_completed",
-                "rpc_method": "ResolveQuest",
-                "grpc_code": code.name,
-                "duration_ms": round((time.time() - start) * 1000, 2),
+            quest, changed = rules.resolve_quest(request.instance_id, status)
+        except rules.InvalidInput as error:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(error))
+        except rules.QuestNotFound as error:
+            logger.warning("quest not found", extra={
+                "event": "quest_not_found",
+                "instance_id": request.instance_id[:64],  # cap length: this value comes from the caller
             })
+            context.abort(grpc.StatusCode.NOT_FOUND, str(error))
+        except rules.QuestAlreadyResolved as error:
+            logger.warning("quest already resolved", extra={
+                "event": "quest_already_resolved",
+                "instance_id": request.instance_id,
+                "quest_status": error.current_status,
+            })
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(error))
+
+        logger.info(
+            "quest resolved" if changed else "quest already has the requested status",
+            extra={
+                "event": "quest_resolved" if changed else "quest_resolve_repeated",
+                "instance_id": quest["instance_id"],
+                "category": quest["category"],
+                "difficulty": quest["difficulty"],
+                "quest_status": quest["status"],
+            },
+        )
+        return quest_pb2.ResolveQuestResponse(quest=_to_message(quest), changed=changed)
+
+
+class RequestLoggingInterceptor(grpc.ServerInterceptor):
+    """Runs around every RPC, like the HTTP app's middleware.
+
+    - Request ID: uses the caller's `x-request-id` metadata if it sent one
+      (so one task keeps the same ID across the HTTP and gRPC services),
+      otherwise makes a new one. It is put in request_id_var, so every log
+      line written during the call carries it, and sent back to the caller.
+    - Writes one "rpc completed" log line per call with method, status code
+      and duration (like the HTTP app's "request completed").
+    - Turns an unexpected exception into INTERNAL and logs its stack trace.
+    """
+
+    def intercept_service(self, continuation, handler_call_details):
+        handler = continuation(handler_call_details)
+        if handler is None or handler.unary_unary is None:
+            return handler  # unknown method, or a streaming one (we have none)
+
+        method = handler_call_details.method.rsplit("/", 1)[-1]  # e.g. "ResolveQuest"
+        incoming_id = dict(handler_call_details.invocation_metadata).get("x-request-id")
+        inner = handler.unary_unary
+
+        def logged_behavior(request, context):
+            request_id = pick_request_id(incoming_id)
+            request_id_var.set(request_id)
+            context.send_initial_metadata((("x-request-id", request_id),))
+            start = time.time()
+            code = grpc.StatusCode.OK
+            try:
+                return inner(request, context)
+            except Exception:
+                # context.code() is set if the handler called context.abort(...).
+                code = context.code() or grpc.StatusCode.INTERNAL
+                if context.code() is None:  # not one of our own aborts: a real bug
+                    logger.exception("unhandled exception", extra={"event": "unhandled_exception"})
+                    context.abort(code, "Something went wrong on the server.")
+                raise
+            finally:
+                # INFO for OK, WARNING for client errors, ERROR for server errors (as in the HTTP app).
+                if code == grpc.StatusCode.INTERNAL:
+                    level = logging.ERROR
+                elif code != grpc.StatusCode.OK:
+                    level = logging.WARNING
+                else:
+                    level = logging.INFO
+                logger.log(level, "rpc completed", extra={
+                    "event": "rpc_completed",
+                    "rpc_method": method,
+                    "grpc_code": code.name,
+                    "duration_ms": round((time.time() - start) * 1000, 2),
+                })
+
+        return grpc.unary_unary_rpc_method_handler(
+            logged_behavior,
+            request_deserializer=handler.request_deserializer,
+            response_serializer=handler.response_serializer,
+        )
 
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=10),
+        interceptors=[RequestLoggingInterceptor()],
+    )
     quest_pb2_grpc.add_QuestServiceServicer_to_server(QuestService(), server)
     server.add_insecure_port(f"[::]:{GRPC_PORT}")
     server.start()

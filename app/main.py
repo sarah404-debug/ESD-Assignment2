@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
 from quest_core import rules
-from quest_core.jsonlog import get_logger, request_id_var
+from quest_core.jsonlog import get_logger, pick_request_id, request_id_var
 
 # title/version/description appear at the top of the OpenAPI spec (/openapi.json)
 # and the interactive docs page (/docs).
@@ -246,8 +246,10 @@ async def track_requests(request: Request, call_next):
     if request.url.path == "/metrics":
         return await call_next(request)
 
-    # Give every request its own ID; all log lines for this request will carry it.
-    request_id = uuid.uuid4().hex[:12]
+    # Every request gets an ID; all log lines for this request will carry it.
+    # If the caller sent X-Request-ID (e.g. the gRPC client, so one task has the
+    # same ID in both services), reuse it; otherwise make a new one.
+    request_id = pick_request_id(request.headers.get("X-Request-ID"))
     request_id_var.set(request_id)
 
     start = time.time()

@@ -56,3 +56,19 @@ Check it with:
 ```
 curl "http://localhost:9200/_data_stream/quest-app-logs-*?pretty"
 ```
+
+## Assignment 2: one task across the HTTP and gRPC services
+
+The gRPC client (`clients/grpc_client.py`) sends one request ID to both
+services: the `X-Request-ID` header on its HTTP call and `x-request-id`
+metadata on its gRPC call. Both services log it as `app.request_id`, so one
+search shows the whole task, and `app.service` tells the services apart.
+
+| KQL (Kibana Discover, data view `quest-app-logs`) | What it shows |
+|---|---|
+| `app.request_id : "demo-ok-001"` | Every log line of one task, from both `quest-app` and `quest-grpc` |
+| `app.service : "quest-grpc"` | All gRPC service logs |
+| `app.event : "rpc_completed" and not app.grpc_code : "OK"` | Failed gRPC calls, with their status code |
+
+Add the columns `app.service`, `app.message`, `app.status` and `app.grpc_code`
+to see the sequence at a glance.

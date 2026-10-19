@@ -10,10 +10,24 @@ handling a request automatically carries that request's ID.
 import contextvars
 import json
 import logging
+import re
 import sys
+import uuid
 from datetime import datetime, timezone
 
 request_id_var = contextvars.ContextVar("request_id", default="-")
+
+# A caller may send its own request ID (HTTP header X-Request-ID, gRPC metadata
+# x-request-id), so one ID follows a task across both services. Only short,
+# plain IDs are accepted, so a caller can't inject odd text into the logs.
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def pick_request_id(incoming):
+    """Use the caller's request ID if it is valid; otherwise make a new one."""
+    if incoming and _REQUEST_ID_PATTERN.match(incoming):
+        return incoming
+    return uuid.uuid4().hex[:12]
 
 # Extra fields we allow on a log line (passed via logger.info(..., extra={...})).
 LOG_FIELDS = (

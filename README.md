@@ -127,6 +127,12 @@ venv\Scripts\python clients\grpc_client.py --new completed --deadline 0.001
 ```
 (`INVALID_ARGUMENT` and `DEADLINE_EXCEEDED`.)
 
+Trace correlation: each run of the client uses one request ID (printed at the
+start, or set with `--request-id`) for both its HTTP call and its gRPC call.
+Both services log it, so a Kibana search for `app.request_id : "<id>"` shows
+the whole task across `quest-app` and `quest-grpc` (see
+`logging/kibana-queries.md`).
+
 ## Test
 
 - **Unit tests** for the shared quest rules (`quest_core/rules.py`), using a
