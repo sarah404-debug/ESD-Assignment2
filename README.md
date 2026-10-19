@@ -108,6 +108,25 @@ Regenerate the code after changing `quest.proto` (run from the project folder):
 venv\Scripts\python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. questpb/quest.proto
 ```
 
+### gRPC client
+
+`clients/grpc_client.py` calls `ResolveQuest` on the gRPC service directly
+(through the generated stub), with a deadline (default 2 s), and prints the
+result or the gRPC status code:
+```
+venv\Scripts\python clients\grpc_client.py <instance_id> completed
+venv\Scripts\python clients\grpc_client.py --new skipped
+```
+`--new` first creates a quest with HTTP `POST /quests`, then resolves it over
+gRPC. Outcomes: `completed`, `skipped`, `abandoned` (or `unspecified`, which
+the server rejects). Options: `--deadline SECONDS`, `--target host:port`.
+Failure examples:
+```
+venv\Scripts\python clients\grpc_client.py abc completed
+venv\Scripts\python clients\grpc_client.py --new completed --deadline 0.001
+```
+(`INVALID_ARGUMENT` and `DEADLINE_EXCEEDED`.)
+
 ## Test
 
 - **Unit tests** for the shared quest rules (`quest_core/rules.py`), using a
