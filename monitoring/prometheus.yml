@@ -6,6 +6,11 @@ scrape_configs:
     static_configs:
       - targets: ['quest-app:8000']
 
+  # The gRPC service (Part B) serves its metrics on a separate port.
+  - job_name: 'quest-grpc'
+    static_configs:
+      - targets: ['quest-grpc:9101']
+
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']

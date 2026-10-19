@@ -7,7 +7,8 @@ the HTTP app.
 
 Run from the project folder:
     python -m grpc_service.server
-Port: GRPC_PORT (default 50051).
+Ports: GRPC_PORT (default 50051) for gRPC, METRICS_PORT (default 9101) for
+Prometheus (/metrics).
 """
 import logging
 import os
@@ -16,14 +17,49 @@ import time
 from concurrent import futures
 
 import grpc
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from questpb import quest_pb2, quest_pb2_grpc
 from quest_core import rules
 from quest_core.jsonlog import get_logger, pick_request_id, request_id_var
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9101"))  # Prometheus scrapes /metrics here
 
 logger = get_logger("quest-grpc")
+
+# ── Metrics ─────────────────────────────────────────────────
+# Recorded by RequestLoggingInterceptor for every RPC, measured at the SERVER
+# (from when the call reaches the interceptor until the handler returns).
+# Labels have small fixed value sets: the RPC method name and the gRPC status
+# code name. Quest IDs and request IDs are never labels.
+
+# COUNTER: calls finished, by method and status code (OK, NOT_FOUND, ...).
+# Error rate = calls with grpc_code != "OK" divided by all calls.
+grpc_server_handled_total = Counter(
+    "grpc_server_handled_total",
+    "gRPC calls finished on the server, by method and status code",
+    ["grpc_method", "grpc_code"],
+)
+
+# HISTOGRAM: how long each call takes, in seconds. A ResolveQuest call does
+# one SQLite read and write, so most take about 1-10 ms; the small buckets show
+# that detail, and the larger ones (up to 2.5 s, above the client's 2 s
+# deadline) leave room to see a slow server.
+grpc_server_handling_seconds = Histogram(
+    "grpc_server_handling_seconds",
+    "Time the server takes to handle a gRPC call",
+    ["grpc_method"],
+    buckets=[0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+)
+
+# GAUGE: calls being handled right now (goes up when a call starts, down when
+# it ends). Shows concurrency, and a build-up of calls if the server slows down.
+grpc_server_in_flight = Gauge(
+    "grpc_server_in_flight",
+    "gRPC calls currently being handled by the server",
+    ["grpc_method"],
+)
 
 # Outcome enum (from quest.proto) -> status string used by the shared rules.
 OUTCOME_TO_STATUS = {
@@ -96,6 +132,8 @@ class RequestLoggingInterceptor(grpc.ServerInterceptor):
       line written during the call carries it, and sent back to the caller.
     - Writes one "rpc completed" log line per call with method, status code
       and duration (like the HTTP app's "request completed").
+    - Records the gRPC metrics (see "Metrics" above): calls by method and
+      status code, duration, and calls in flight. Measured at the server.
     - Turns an unexpected exception into INTERNAL and logs its stack trace.
     """
 
@@ -112,8 +150,9 @@ class RequestLoggingInterceptor(grpc.ServerInterceptor):
             request_id = pick_request_id(incoming_id)
             request_id_var.set(request_id)
             context.send_initial_metadata((("x-request-id", request_id),))
-            start = time.time()
+            start = time.perf_counter()
             code = grpc.StatusCode.OK
+            grpc_server_in_flight.labels(grpc_method=method).inc()
             try:
                 return inner(request, context)
             except Exception:
@@ -124,6 +163,11 @@ class RequestLoggingInterceptor(grpc.ServerInterceptor):
                     context.abort(code, "Something went wrong on the server.")
                 raise
             finally:
+                duration = time.perf_counter() - start
+                grpc_server_in_flight.labels(grpc_method=method).dec()
+                grpc_server_handled_total.labels(grpc_method=method, grpc_code=code.name).inc()
+                grpc_server_handling_seconds.labels(grpc_method=method).observe(duration)
+
                 # INFO for OK, WARNING for client errors, ERROR for server errors (as in the HTTP app).
                 if code == grpc.StatusCode.INTERNAL:
                     level = logging.ERROR
@@ -135,7 +179,7 @@ class RequestLoggingInterceptor(grpc.ServerInterceptor):
                     "event": "rpc_completed",
                     "rpc_method": method,
                     "grpc_code": code.name,
-                    "duration_ms": round((time.time() - start) * 1000, 2),
+                    "duration_ms": round(duration * 1000, 2),
                 })
 
         return grpc.unary_unary_rpc_method_handler(
@@ -154,6 +198,10 @@ def serve():
     server.add_insecure_port(f"[::]:{GRPC_PORT}")
     server.start()
     logger.info(f"gRPC server listening on port {GRPC_PORT}", extra={"event": "server_started"})
+
+    # A small HTTP server (in a background thread) for Prometheus: /metrics.
+    start_http_server(METRICS_PORT)
+    logger.info(f"metrics on http://0.0.0.0:{METRICS_PORT}/metrics", extra={"event": "metrics_started"})
 
     # `docker compose stop` sends SIGTERM: finish in-flight calls (up to 5 s), then exit.
     signal.signal(signal.SIGTERM, lambda *_: server.stop(grace=5))

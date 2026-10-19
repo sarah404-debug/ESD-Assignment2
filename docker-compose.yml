@@ -33,9 +33,11 @@ services:
     command: ["python", "-m", "grpc_service.server"]
     ports:
       - "50051:50051"
+      - "9101:9101"   # /metrics for Prometheus (also handy to open in a browser)
     environment:
       - QUEST_DB_PATH=/data/quests.db
       - GRPC_PORT=50051
+      - METRICS_PORT=9101
     volumes:
       - questdata:/data
     logging:
