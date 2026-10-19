@@ -1,0 +1,53 @@
+// gRPC contract for the Quest App's gRPC service.
+//
+// It offers ONE operation from the "resolve a quest" user task: ResolveQuest,
+// the gRPC version of HTTP PATCH /quests/{instance_id}. Both use the same
+// business rules (quest_core/rules.py) and the same database.
+//
+// Generate the Python code (run from the project folder):
+//   python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. questpb/quest.proto
+
+syntax = "proto3";
+
+package quest.v1;
+
+service QuestService {
+  // Resolve an in-progress quest as completed, skipped or abandoned.
+  // Asking again for the status the quest already has is safe (changed = false).
+  //
+  // Errors (gRPC status codes):
+  //   INVALID_ARGUMENT     instance_id is not a UUID, or outcome is OUTCOME_UNSPECIFIED
+  //   NOT_FOUND            no quest has this instance_id
+  //   FAILED_PRECONDITION  the quest was already resolved with a different outcome
+  rpc ResolveQuest (ResolveQuestRequest) returns (ResolveQuestResponse);
+}
+
+// How the quest was resolved. Proto3 enums must start at 0, and 0 is what an
+// unset field reads as, so 0 means "not given" and is rejected by the server.
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_COMPLETED = 1;
+  OUTCOME_SKIPPED = 2;
+  OUTCOME_ABANDONED = 3;
+}
+
+message ResolveQuestRequest {
+  string instance_id = 1;  // UUID of the quest, e.g. "0b614e9e-2f05-4061-93df-07b4c70a63a4"
+  Outcome outcome = 2;
+}
+
+// Same fields as the Quest JSON returned by the HTTP API.
+message Quest {
+  string instance_id = 1;
+  int32 quest_id = 2;
+  string category = 3;
+  string difficulty = 4;
+  string text = 5;
+  string status = 6;       // "in_progress", "completed", "skipped" or "abandoned"
+  double created_at = 7;   // Unix timestamp (seconds)
+}
+
+message ResolveQuestResponse {
+  Quest quest = 1;
+  bool changed = 2;  // false: the quest already had this outcome (a safe repeat)
+}

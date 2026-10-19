@@ -90,6 +90,23 @@ After changing an endpoint, regenerate the saved file:
 python scripts\export_openapi.py
 ```
 
+## gRPC contract
+
+The gRPC service's contract is `questpb/quest.proto` (one RPC,
+`QuestService.ResolveQuest`). The Python code generated from it
+(`questpb/quest_pb2.py`, `quest_pb2.pyi`, `quest_pb2_grpc.py`) is committed,
+so nothing needs generating to run the project.
+
+One-time setup of a local Python environment with the gRPC tools:
+```
+python -m venv venv
+venv\Scripts\python -m pip install -r requirements-dev.txt
+```
+Regenerate the code after changing `quest.proto` (run from the project folder):
+```
+venv\Scripts\python -m grpc_tools.protoc -I. --python_out=. --pyi_out=. --grpc_python_out=. questpb/quest.proto
+```
+
 ## Test
 
 - **Unit tests** for the shared quest rules (`quest_core/rules.py`), using a
