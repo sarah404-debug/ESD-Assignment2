@@ -12,9 +12,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
+from starlette.routing import Match
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-from quest_core import rules
+from quest_core import quest_metrics, rules
 from quest_core.jsonlog import get_logger, pick_request_id, request_id_var
 
 # title/version/description appear at the top of the OpenAPI spec (/openapi.json)
@@ -181,30 +182,14 @@ quests_generated_total = Counter(
     ["category"]
 )
 
-quests_completed_total = Counter(
-    "quests_completed_total",
-    "Total number of quests completed",
-    ["category", "difficulty"]
-)
-
-quests_skipped_total = Counter(
-    "quests_skipped_total",
-    "Total number of quests skipped",
-    ["category"]
-)
-
-quests_abandoned_total = Counter(
-    "quests_abandoned_total",
-    "Total number of quests abandoned",
-    ["category"]
-)
-
-# GAUGE: something that goes up AND down.
-quests_in_progress = Gauge(
-    "quests_in_progress",
-    "Number of quests currently in progress",
-    ["category"]
-)
+# Resolve metrics (quests_completed_total, quests_skipped_total,
+# quests_abandoned_total, quest_time_to_resolve_seconds) are in
+# quest_core/quest_metrics.py, because the gRPC service records them too.
+#
+# GAUGE quests_in_progress{category}: counted in the shared database each time
+# Prometheus scrapes (also in quest_core/quest_metrics.py). Registered here
+# only, so it is exported once.
+quest_metrics.register_in_progress_collector()
 
 # HISTOGRAM: measures how long something takes, sorted into buckets.
 # Custom buckets: quest generation takes microseconds, so the buckets start very small.
@@ -213,14 +198,6 @@ quest_generation_latency_seconds = Histogram(
     "quest_generation_latency_seconds",
     "Time taken to generate a new quest",
     buckets=[0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1]
-)
-
-# SUMMARY: tracks a running count and sum of observations (so we can compute an average).
-# Here: how many seconds pass between a quest being generated and being resolved.
-quest_time_to_resolve_seconds = Summary(
-    "quest_time_to_resolve_seconds",
-    "Seconds between a quest being generated and being resolved",
-    ["status"]
 )
 
 # APPLICATION METRICS: every HTTP request, recorded by the middleware below.
@@ -239,6 +216,23 @@ http_request_duration_seconds = Histogram(
     buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5]
 )
 
+# GAUGE: requests being handled right now (up when a request starts, down when
+# it ends). The HTTP counterpart of grpc_server_in_flight in the gRPC service.
+http_requests_in_flight = Gauge(
+    "http_requests_in_flight",
+    "HTTP requests currently being handled",
+    ["method", "endpoint"]
+)
+
+def _route_template(scope):
+    """The route template a request will go to (e.g. /quests/{instance_id}),
+    worked out before the request runs, so the in-flight gauge can use it."""
+    for route in app.router.routes:
+        match, _ = route.matches(scope)
+        if match != Match.NONE:
+            return route.path
+    return "unmatched"
+
 # ── Middleware ──────────────────────────────────────────────
 @app.middleware("http")
 async def track_requests(request: Request, call_next):
@@ -254,6 +248,8 @@ async def track_requests(request: Request, call_next):
 
     start = time.time()
     status_code = 500  # assume failure unless the request finishes normally
+    in_flight = http_requests_in_flight.labels(method=request.method, endpoint=_route_template(request.scope))
+    in_flight.inc()
 
     try:
         response = await call_next(request)
@@ -264,6 +260,7 @@ async def track_requests(request: Request, call_next):
         logger.exception("unhandled exception", extra={"event": "unhandled_exception"})
         response = error_response(500, "internal_error", "Something went wrong on the server.")
     finally:
+        in_flight.dec()
         # Use the route template (e.g. /quests/{instance_id}), NOT the real URL,
         # so we don't create a new time series for every instance_id.
         route = request.scope.get("route")
@@ -383,7 +380,6 @@ def create_quest(
 
     # Update metrics
     quests_generated_total.labels(category=instance["category"]).inc()
-    quests_in_progress.labels(category=instance["category"]).inc()
 
     duration = time.time() - start_time
     quest_generation_latency_seconds.observe(duration)
@@ -453,32 +449,16 @@ def _resolve_quest(instance_id: str, new_status: str):
 
 def _record_resolved(instance):
     """Metrics and log line for a quest that has just been resolved."""
-    new_status = instance["status"]
-    category = instance["category"]
-    difficulty = instance["difficulty"]
-
-    # Record how long this quest took to resolve (Summary).
-    quest_time_to_resolve_seconds.labels(status=new_status).observe(
-        time.time() - instance["created_at"]
-    )
-
-    # This quest is no longer "in progress", so the gauge goes DOWN.
-    quests_in_progress.labels(category=category).dec()
-
-    # And the right counter goes UP.
-    if new_status == "completed":
-        quests_completed_total.labels(category=category, difficulty=difficulty).inc()
-    elif new_status == "skipped":
-        quests_skipped_total.labels(category=category).inc()
-    elif new_status == "abandoned":
-        quests_abandoned_total.labels(category=category).inc()
+    # Same counters and summary as the gRPC service (quest_core/quest_metrics.py).
+    # quests_in_progress needs no update: it is counted in the database.
+    quest_metrics.record_resolved(instance)
 
     logger.info("quest resolved", extra={
         "event": "quest_resolved",
         "instance_id": instance["instance_id"],
-        "category": category,
-        "difficulty": difficulty,
-        "quest_status": new_status,
+        "category": instance["category"],
+        "difficulty": instance["difficulty"],
+        "quest_status": instance["status"],
     })
 
 # Finish a quest: one endpoint on the quest itself replaces the old

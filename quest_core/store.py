@@ -106,6 +106,18 @@ def list_quests(status=None):
         conn.close()
 
 
+def count_in_progress_by_category():
+    """Return {category: number of in-progress quests} (categories with none are left out)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT category, COUNT(*) FROM quests WHERE status = 'in_progress' GROUP BY category"
+        ).fetchall()
+        return {category: count for category, count in rows}
+    finally:
+        conn.close()
+
+
 def insert_quest(quest, idempotency_key=None):
     """Save a new quest. Returns (stored_quest, created).
 

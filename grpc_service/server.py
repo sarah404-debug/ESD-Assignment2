@@ -20,7 +20,7 @@ import grpc
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from questpb import quest_pb2, quest_pb2_grpc
-from quest_core import rules
+from quest_core import quest_metrics, rules
 from quest_core.jsonlog import get_logger, pick_request_id, request_id_var
 
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
@@ -110,6 +110,9 @@ class QuestService(quest_pb2_grpc.QuestServiceServicer):
             })
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(error))
 
+        if changed:
+            # Same resolve counters as the HTTP app (quest_core/quest_metrics.py).
+            quest_metrics.record_resolved(quest)
         logger.info(
             "quest resolved" if changed else "quest already has the requested status",
             extra={
