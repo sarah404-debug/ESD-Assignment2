@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
+from quest_core import store
+
 # title/version/description appear at the top of the OpenAPI spec (/openapi.json)
 # and the interactive docs page (/docs).
 app = FastAPI(
@@ -208,13 +210,8 @@ QUESTS = [
     {"id": 5, "category": "social", "difficulty": "hard", "text": "Tell someone something you appreciate about them, out loud."},
 ]
 
-quest_instances = {}
-
-# Idempotency-Key -> instance_id of the quest that key created (see POST /quests).
-idempotency_keys = {}
-# Only one request at a time may check a key and create a quest, so two copies
-# of the same request arriving together can't both create one.
-_create_lock = threading.Lock()
+# Quests (and Idempotency-Keys) are stored in the shared SQLite database in
+# quest_core/store.py, the single source of truth for both services.
 
 # ── Metrics ─────────────────────────────────────────────────
 # COUNTER: something that only ever goes up.
@@ -407,34 +404,11 @@ def create_quest(
         if _fault_request_count % FAULT_EVERY_N == 0:
             time.sleep(FAULT_DELAY_MS / 1000)
 
-    with _create_lock:
-        # Seen this key before? Return the quest it already created; change nothing.
-        if idempotency_key is not None and idempotency_key in idempotency_keys:
-            instance_id = idempotency_keys[idempotency_key]
-            logger.info("repeated create request, returning existing quest", extra={
-                "event": "quest_create_replayed",
-                "instance_id": instance_id,
-            })
-            response.headers["Location"] = f"/quests/{instance_id}"
-            response.headers["Idempotent-Replayed"] = "true"
-            return quest_instances[instance_id]
-
-        instance = _new_quest()
-        if idempotency_key is not None:
-            idempotency_keys[idempotency_key] = instance["instance_id"]
-
-    response.headers["Location"] = f"/quests/{instance['instance_id']}"
-    return instance
-
-def _new_quest():
-    """Pick a random quest, store it as in progress, and record metrics and a log line."""
     start_time = time.time()  # mark when we started, so we can measure duration
 
     quest = random.choice(QUESTS)
-    instance_id = str(uuid.uuid4())
-
-    quest_instances[instance_id] = {
-        "instance_id": instance_id,
+    new_instance = {
+        "instance_id": str(uuid.uuid4()),
         "quest_id": quest["id"],
         "category": quest["category"],
         "difficulty": quest["difficulty"],
@@ -442,6 +416,19 @@ def _new_quest():
         "status": "in_progress",
         "created_at": time.time(),  # remembered so we can measure time-to-resolve later
     }
+
+    # Saves the quest, unless this Idempotency-Key was used before: then nothing
+    # is saved and we get back the quest that key already created.
+    instance, created = store.insert_quest(new_instance, idempotency_key)
+    response.headers["Location"] = f"/quests/{instance['instance_id']}"
+
+    if not created:
+        logger.info("repeated create request, returning existing quest", extra={
+            "event": "quest_create_replayed",
+            "instance_id": instance["instance_id"],
+        })
+        response.headers["Idempotent-Replayed"] = "true"
+        return instance
 
     # Update metrics
     quests_generated_total.labels(category=quest["category"]).inc()
@@ -452,20 +439,17 @@ def _new_quest():
 
     logger.info("quest generated", extra={
         "event": "quest_generated",
-        "instance_id": instance_id,
+        "instance_id": instance["instance_id"],
         "category": quest["category"],
         "difficulty": quest["difficulty"],
     })
 
-    return quest_instances[instance_id]
+    return instance
 
 # List all quests. Optional filter, e.g. GET /quests?status=in_progress
 @app.get("/quests", response_model=list[Quest], summary="List quests", responses=INVALID)
 def list_quests(status: QuestStatus | None = None):
-    quests = quest_instances.values()
-    if status is not None:
-        quests = [q for q in quests if q["status"] == status]
-    return list(quests)
+    return store.list_quests(status)
 
 # Look at one quest. instance_id must be a valid UUID; FastAPI rejects
 # anything else (e.g. "abc") with 422 before this function runs.
@@ -476,20 +460,29 @@ def list_quests(status: QuestStatus | None = None):
     responses={**NOT_FOUND, **INVALID},
 )
 def get_quest(instance_id: uuid.UUID):
-    instance = quest_instances.get(str(instance_id))
+    instance = store.get_quest(str(instance_id))
     if instance is None:
         raise ApiError(404, "quest_not_found", "Quest instance not found")
     return instance
 
 def _resolve_quest(instance_id: str, new_status: str):
-    if instance_id not in quest_instances:
+    instance = store.get_quest(instance_id)
+    if instance is None:
         logger.warning("quest not found", extra={
             "event": "quest_not_found",
             "instance_id": instance_id[:64],  # cap length: this value comes from the URL
         })
         raise ApiError(404, "quest_not_found", "Quest instance not found")
 
-    instance = quest_instances[instance_id]
+    # Still in progress: change the status in the database, but only if it is
+    # still in progress at that moment. If another request resolved it in the
+    # meantime, re-read it and let the checks below decide.
+    if instance["status"] == "in_progress":
+        if store.change_status(instance_id, "in_progress", new_status):
+            instance["status"] = new_status
+            _record_resolved(instance)
+            return instance
+        instance = store.get_quest(instance_id)
 
     # Idempotency: asking for the status the quest already has (e.g. a retry of a
     # request that already worked) changes nothing and counts nothing twice.
@@ -502,16 +495,17 @@ def _resolve_quest(instance_id: str, new_status: str):
         return instance
 
     # A *different* final status is a real conflict, e.g. skipping a completed quest.
-    if instance["status"] != "in_progress":
-        logger.warning("quest already resolved", extra={
-            "event": "quest_already_resolved",
-            "instance_id": instance_id,
-            "quest_status": instance["status"],
-        })
-        # 409 Conflict: the request itself is fine, but it clashes with the quest's current state.
-        raise ApiError(409, "quest_already_resolved", f"Quest is already '{instance['status']}'")
+    logger.warning("quest already resolved", extra={
+        "event": "quest_already_resolved",
+        "instance_id": instance_id,
+        "quest_status": instance["status"],
+    })
+    # 409 Conflict: the request itself is fine, but it clashes with the quest's current state.
+    raise ApiError(409, "quest_already_resolved", f"Quest is already '{instance['status']}'")
 
-    instance["status"] = new_status
+def _record_resolved(instance):
+    """Metrics and log line for a quest that has just been resolved."""
+    new_status = instance["status"]
     category = instance["category"]
     difficulty = instance["difficulty"]
 
@@ -533,13 +527,11 @@ def _resolve_quest(instance_id: str, new_status: str):
 
     logger.info("quest resolved", extra={
         "event": "quest_resolved",
-        "instance_id": instance_id,
+        "instance_id": instance["instance_id"],
         "category": category,
         "difficulty": difficulty,
         "quest_status": new_status,
     })
-
-    return instance
 
 # Finish a quest: one endpoint on the quest itself replaces the old
 # /complete, /skip and /abandon endpoints.

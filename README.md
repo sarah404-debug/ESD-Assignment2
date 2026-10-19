@@ -10,8 +10,10 @@ on top of it.
 Quest App gives a person a random small "side quest" (e.g. "Take a 20-minute
 walk with no phone") through an HTTP API. Every quest lifecycle event and
 every HTTP request is measured (Prometheus/Grafana) and logged as JSON
-(Filebeat/Elasticsearch/Kibana). Quests live in memory only — they are lost
-when the app restarts. A small one-page UI is served at `/ui`.
+(Filebeat/Elasticsearch/Kibana). Quests are stored in a small SQLite
+database (`quest_core/store.py`) on the Docker volume `questdata`, so they
+survive restarts and can be shared with the gRPC service. A small one-page UI
+is served at `/ui`.
 
 ## Start
 
@@ -144,14 +146,15 @@ python scripts\export_openapi.py
 - **Pause everything** (keeps all data): `docker compose stop`
 - **Resume:** `docker compose up -d`
 - **Do NOT run `docker compose down`** casually — it removes containers.
-  Elasticsearch's logs survive this (named volume `esdata`), but **Grafana
+  Elasticsearch's logs and the quests survive this (named volumes `esdata`
+  and `questdata`), but **Grafana
   and Prometheus have no volumes, so their dashboards and metric history are
   lost.** The Grafana dashboard is exported to
   `monitoring/dashboards/*.json` as a backup for exactly this reason — if
   you do run `down`, re-import that file into a fresh Grafana instance to
   get the dashboard back.
-- **`docker compose down -v`** additionally deletes the `esdata` volume,
-  permanently removing all stored logs. If you do this and want retention
+- **`docker compose down -v`** additionally deletes the `esdata` and
+  `questdata` volumes, permanently removing all stored logs and quests. If you do this and want retention
   configured again afterwards, re-run:
   ```
   curl -X PUT "http://localhost:9200/_data_stream/quest-app-logs-*/_lifecycle" -H "Content-Type: application/json" -d "{\"data_retention\":\"7d\"}"

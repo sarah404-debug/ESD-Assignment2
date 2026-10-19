@@ -13,6 +13,10 @@ services:
       # Rate limit for POST /quests: this many calls per client IP per window.
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-30}
       - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-10}
+      # The shared quest database (quest_core/store.py), kept on the questdata volume.
+      - QUEST_DB_PATH=/data/quests.db
+    volumes:
+      - questdata:/data
     # Docker keeps the app's stdout (our JSON logs) in a json-file on disk.
     # These options cap it at 3 files of 10 MB each, so old container logs get rotated out.
     logging:
@@ -89,3 +93,6 @@ services:
 
 volumes:
   esdata:
+  # Named volume for the quest database: quests survive container restarts,
+  # and the gRPC service (Part B) mounts the same volume to share them.
+  questdata:
