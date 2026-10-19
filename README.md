@@ -92,6 +92,11 @@ python scripts\export_openapi.py
 
 ## Test
 
+- **Unit tests** for the shared quest rules (`quest_core/rules.py`), using a
+  throwaway database, no app or Docker needed:
+  ```
+  python -m unittest discover -s tests -v
+  ```
 - **Dashboards:** open the "Quest App Dashboard" in Grafana for metrics
   (Counters, Gauges, Histograms, a Summary, and Node Exporter machine
   metrics). Open Kibana Discover (data view `quest-app-logs`) for logs; see
