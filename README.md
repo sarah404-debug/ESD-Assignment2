@@ -143,6 +143,13 @@ failures, with the HTTP and gRPC status codes for each):
 venv\Scripts\python scripts\compare_http_grpc.py
 ```
 
+Repeatable traffic for the metrics dashboards: resolves quests through HTTP
+and gRPC in turn, with a fixed mix of successes and failures (same `--seed`
+= same sequence), and prints a summary per version:
+```
+venv\Scripts\python scripts\metrics_traffic.py --duration 300
+```
+
 ## Test
 
 - **Unit tests** for the shared quest rules (`quest_core/rules.py`), using a
