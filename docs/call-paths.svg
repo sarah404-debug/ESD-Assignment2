@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="800" viewBox="0 0 1420 800" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="1420" height="800" fill="#ffffff"/>
+
+  <text x="710" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#0f172a">Call paths: resolve a quest over HTTP and over gRPC</text>
+  <text x="710" y="66" text-anchor="middle" font-size="14" fill="#475569">Both paths end in the same business rules and the same database: one source of truth</text>
+
+  <!-- ───────── HTTP lane ───────── -->
+  <text x="20" y="110" font-size="16" font-weight="700" fill="#1d4ed8">HTTP path</text>
+
+  <rect x="20" y="150" width="190" height="90" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="115" y="183" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">HTTP caller</text>
+  <text x="115" y="205" text-anchor="middle" font-size="12" fill="#334155">web page, curl,</text>
+  <text x="115" y="222" text-anchor="middle" font-size="12" fill="#334155">quest_caller.py</text>
+
+  <line x1="210" y1="195" x2="578" y2="195" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="395" y="160" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">HTTP/1.1 over the network</text>
+  <text x="395" y="177" text-anchor="middle" font-size="12" fill="#334155">PATCH /quests/{id}  {"status": "completed"}</text>
+  <text x="395" y="216" text-anchor="middle" font-size="12" fill="#334155">JSON body + X-Request-ID header</text>
+
+  <rect x="580" y="120" width="330" height="210" rx="12" fill="#f8fafc" stroke="#1d4ed8" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="595" y="142" font-size="13" font-weight="700" fill="#1d4ed8">container quest-app (port 8000)</text>
+  <rect x="600" y="160" width="290" height="70" rx="8" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="745" y="186" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">Uvicorn + FastAPI middleware</text>
+  <text x="745" y="205" text-anchor="middle" font-size="12" fill="#334155">reuses/creates request ID, metrics,</text>
+  <text x="745" y="221" text-anchor="middle" font-size="12" fill="#334155">"request completed" log line</text>
+  <line x1="745" y1="231" x2="745" y2="249" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="600" y="250" width="290" height="65" rx="8" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="745" y="275" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">route handler update_quest()</text>
+  <text x="745" y="294" text-anchor="middle" font-size="12" fill="#334155">Pydantic validates ID + status</text>
+  <text x="745" y="309" text-anchor="middle" font-size="12" fill="#334155">app/main.py</text>
+
+  <!-- ───────── gRPC lane ───────── -->
+  <text x="20" y="420" font-size="16" font-weight="700" fill="#15803d">gRPC path</text>
+
+  <rect x="20" y="460" width="190" height="90" rx="10" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="115" y="493" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">gRPC client</text>
+  <text x="115" y="515" text-anchor="middle" font-size="12" fill="#334155">clients/grpc_client.py</text>
+  <text x="115" y="532" text-anchor="middle" font-size="12" fill="#334155">builds ResolveQuestRequest</text>
+
+  <line x1="210" y1="505" x2="268" y2="505" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="240" y="580" text-anchor="middle" font-size="11" fill="#334155">local call:</text>
+  <text x="240" y="595" text-anchor="middle" font-size="11" fill="#334155">stub.ResolveQuest(</text>
+  <text x="240" y="610" text-anchor="middle" font-size="11" fill="#334155">req, timeout=2)</text>
+
+  <rect x="270" y="455" width="200" height="100" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2"/>
+  <text x="370" y="482" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">Generated client stub</text>
+  <text x="370" y="501" text-anchor="middle" font-size="12" fill="#334155">QuestServiceStub</text>
+  <text x="370" y="517" text-anchor="middle" font-size="12" fill="#334155">(questpb/quest_pb2_grpc.py)</text>
+  <text x="370" y="537" text-anchor="middle" font-size="12" fill="#334155">serializes to protobuf</text>
+
+  <line x1="470" y1="505" x2="578" y2="505" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="525" y="455" text-anchor="middle" font-size="12" font-weight="700" fill="#15803d">network</text>
+  <text x="525" y="472" text-anchor="middle" font-size="11" fill="#334155">HTTP/2,</text>
+  <text x="525" y="487" text-anchor="middle" font-size="11" fill="#334155">binary protobuf</text>
+  <text x="525" y="528" text-anchor="middle" font-size="11" fill="#334155">x-request-id</text>
+  <text x="525" y="543" text-anchor="middle" font-size="11" fill="#334155">metadata,</text>
+  <text x="525" y="558" text-anchor="middle" font-size="11" fill="#334155">deadline 2 s</text>
+
+  <rect x="580" y="400" width="330" height="272" rx="12" fill="#f8fafc" stroke="#15803d" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="595" y="422" font-size="13" font-weight="700" fill="#15803d">container quest-grpc (port 50051)</text>
+  <rect x="600" y="436" width="290" height="64" rx="8" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="745" y="460" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">gRPC server + interceptor</text>
+  <text x="745" y="478" text-anchor="middle" font-size="12" fill="#334155">RequestLoggingInterceptor: request ID,</text>
+  <text x="745" y="493" text-anchor="middle" font-size="12" fill="#334155">"rpc completed" log line</text>
+  <line x1="745" y1="501" x2="745" y2="524" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="600" y="526" width="290" height="50" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+  <text x="745" y="547" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">Generated server code</text>
+  <text x="745" y="566" text-anchor="middle" font-size="12" fill="#334155">quest_pb2_grpc.py: decodes protobuf</text>
+  <line x1="745" y1="577" x2="745" y2="599" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="600" y="601" width="290" height="60" rx="8" fill="#f0fdf4" stroke="#15803d" stroke-width="1.5"/>
+  <text x="745" y="623" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">Server handler</text>
+  <text x="745" y="640" text-anchor="middle" font-size="12" fill="#334155">QuestService.ResolveQuest()</text>
+  <text x="745" y="655" text-anchor="middle" font-size="12" fill="#334155">grpc_service/server.py</text>
+
+  <!-- ───────── shared ───────── -->
+  <rect x="970" y="150" width="200" height="520" rx="12" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="1070" y="360" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">Shared business rules</text>
+  <text x="1070" y="384" text-anchor="middle" font-size="13" fill="#334155">quest_core/rules.py</text>
+  <text x="1070" y="406" text-anchor="middle" font-size="13" font-weight="700" fill="#6d28d9">resolve_quest()</text>
+  <text x="1070" y="436" text-anchor="middle" font-size="12" fill="#334155">in_progress → final status</text>
+  <text x="1070" y="454" text-anchor="middle" font-size="12" fill="#334155">same status again = safe</text>
+  <text x="1070" y="472" text-anchor="middle" font-size="12" fill="#334155">other status = conflict</text>
+
+  <line x1="890" y1="282" x2="968" y2="282" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="890" y1="631" x2="968" y2="631" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <line x1="1170" y1="400" x2="1218" y2="400" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="1220" y="300" width="180" height="200" rx="12" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>
+  <text x="1310" y="345" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">Shared database</text>
+  <text x="1310" y="369" text-anchor="middle" font-size="12" fill="#334155">quest_core/store.py</text>
+  <text x="1310" y="391" text-anchor="middle" font-size="12" fill="#334155">SQLite /data/quests.db</text>
+  <text x="1310" y="413" text-anchor="middle" font-size="12" fill="#334155">on Docker volume</text>
+  <text x="1310" y="431" text-anchor="middle" font-size="12" font-weight="700" fill="#6d28d9">questdata</text>
+  <text x="1310" y="461" text-anchor="middle" font-size="12" fill="#334155">atomic UPDATE …</text>
+  <text x="1310" y="477" text-anchor="middle" font-size="12" fill="#334155">WHERE status='in_progress'</text>
+
+  <!-- ───────── responses / legend ───────── -->
+  <rect x="20" y="690" width="1380" height="92" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="40" y="716" font-size="13" font-weight="700" fill="#1d4ed8">HTTP response:</text>
+  <text x="160" y="716" font-size="13" fill="#334155">200 + Quest JSON · errors 404 / 409 / 422 with the JSON error body {"error", "message", "request_id"}</text>
+  <text x="40" y="740" font-size="13" font-weight="700" fill="#15803d">gRPC response:</text>
+  <text x="160" y="740" font-size="13" fill="#334155">OK + ResolveQuestResponse (protobuf) · errors NOT_FOUND / FAILED_PRECONDITION / INVALID_ARGUMENT as gRPC status in the trailers</text>
+  <text x="40" y="764" font-size="13" font-weight="700" fill="#b45309">Yellow boxes:</text>
+  <text x="160" y="764" font-size="13" fill="#334155">code generated from questpb/quest.proto.   Both services log JSON with the same request_id → Filebeat → Elasticsearch / Kibana.</text>
+</svg>

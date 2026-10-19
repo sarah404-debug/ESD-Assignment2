@@ -93,6 +93,9 @@ python scripts\export_openapi.py
 
 ## gRPC contract
 
+Call-path diagram for both versions (HTTP and gRPC, including the generated
+stub and the server handler): `docs/call-paths.svg` (PNG: `docs/call-paths.png`).
+
 The gRPC service's contract is `questpb/quest.proto` (one RPC,
 `QuestService.ResolveQuest`). The Python code generated from it
 (`questpb/quest_pb2.py`, `quest_pb2.pyi`, `quest_pb2_grpc.py`) is committed,
@@ -132,6 +135,12 @@ start, or set with `--request-id`) for both its HTTP call and its gRPC call.
 Both services log it, so a Kibana search for `app.request_id : "<id>"` shows
 the whole task across `quest-app` and `quest-grpc` (see
 `logging/kibana-queries.md`).
+
+Same operation through both versions, side by side (one success and three
+failures, with the HTTP and gRPC status codes for each):
+```
+venv\Scripts\python scripts\compare_http_grpc.py
+```
 
 ## Test
 
