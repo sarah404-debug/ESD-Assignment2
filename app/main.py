@@ -1,13 +1,9 @@
-import contextvars
-import json
 import logging
 import math
 import os
-import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, Header, Request, Response
@@ -19,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import Counter, Gauge, Histogram, Summary, generate_latest, CONTENT_TYPE_LATEST
 
 from quest_core import rules
+from quest_core.jsonlog import get_logger, request_id_var
 
 # title/version/description appear at the top of the OpenAPI spec (/openapi.json)
 # and the interactive docs page (/docs).
@@ -33,38 +30,10 @@ app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=Tr
 
 # ── Logging ─────────────────────────────────────────────────
 # Every log line is one JSON object written to stdout (Docker captures stdout).
+# The format is shared with the gRPC service (quest_core/jsonlog.py).
 # request_id lives in a context variable so any log line written while handling
 # a request automatically carries that request's ID.
-request_id_var = contextvars.ContextVar("request_id", default="-")
-
-# Extra fields we allow on a log line (passed via logger.info(..., extra={...})).
-LOG_FIELDS = (
-    "event", "method", "path", "endpoint", "status", "duration_ms",
-    "instance_id", "category", "difficulty", "quest_status",
-)
-
-class JsonFormatter(logging.Formatter):
-    def format(self, record):
-        entry = {
-            "time": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-            "service": "quest-app",
-            "severity": record.levelname,
-            "message": record.getMessage(),
-            "request_id": request_id_var.get(),
-        }
-        for field in LOG_FIELDS:
-            if hasattr(record, field):
-                entry[field] = getattr(record, field)
-        if record.exc_info:
-            entry["exception"] = self.formatException(record.exc_info)
-        return json.dumps(entry)
-
-logger = logging.getLogger("quest-app")
-logger.setLevel(logging.INFO)
-logger.propagate = False
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(JsonFormatter())
-logger.addHandler(_handler)
+logger = get_logger("quest-app")
 
 # ── Errors ──────────────────────────────────────────────────
 # Every error the API returns has the same JSON shape:

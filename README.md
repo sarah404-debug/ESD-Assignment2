@@ -32,6 +32,7 @@ is served at `/ui`.
 |---|---|
 | App (web page) | http://127.0.0.1:8000/ui |
 | API docs (Swagger) | http://127.0.0.1:8000/docs |
+| gRPC service (`QuestService.ResolveQuest`) | `localhost:50051` (container `quest-grpc`) |
 | Metrics | http://127.0.0.1:8000/metrics |
 | Prometheus | http://localhost:9090 (targets: `/targets`) |
 | Grafana | http://localhost:3000 (admin / admin) |

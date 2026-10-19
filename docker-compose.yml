@@ -25,6 +25,25 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # The gRPC service (Part B): a separate process/container, built from the same
+  # image as quest-app but running the gRPC server. It mounts the same questdata
+  # volume, so both services read and write the same quests.
+  quest-grpc:
+    build: .
+    command: ["python", "-m", "grpc_service.server"]
+    ports:
+      - "50051:50051"
+    environment:
+      - QUEST_DB_PATH=/data/quests.db
+      - GRPC_PORT=50051
+    volumes:
+      - questdata:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   prometheus:
     image: prom/prometheus:latest
     ports:
