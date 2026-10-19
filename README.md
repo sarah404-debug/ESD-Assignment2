@@ -157,9 +157,17 @@ venv\Scripts\python scripts\metrics_traffic.py --duration 300
   ```
   python -m unittest discover -s tests -v
   ```
-- **Dashboards:** open the "Quest App Dashboard" in Grafana for metrics
-  (Counters, Gauges, Histograms, a Summary, and Node Exporter machine
-  metrics). Open Kibana Discover (data view `quest-app-logs`) for logs; see
+- **Dashboards:** open the "Quest App A2: HTTP vs gRPC" dashboard in Grafana
+  (Dashboards list, or http://localhost:3000/d/quest-app-a2). Grafana loads
+  it, and its Prometheus data source, automatically at startup (provisioning:
+  `monitoring/grafana/provisioning/`, dashboard file
+  `monitoring/grafana/dashboards/quest-app-a2.json`). Top: resolving a quest
+  over HTTP and gRPC side by side (calls and error rate by status, p50/p95
+  duration, duration histogram, in flight). Middle: quests in progress and
+  resolved, from both services. Bottom: the Assignment 1 panels. To fill the
+  panels, run `venv\Scripts\python scripts\metrics_traffic.py --duration 300`.
+  (`monitoring/dashboards/` holds the old Assignment 1 dashboard export.)
+  Open Kibana Discover (data view `quest-app-logs`) for logs; see
   `logging/kibana-queries.md` for ready-made searches.
 - **Fault injection (Part E1):** the app has an environment-variable switch,
   off by default, that delays every Nth call to `POST /quests`:
@@ -212,12 +220,9 @@ venv\Scripts\python scripts\metrics_traffic.py --duration 300
 - **Resume:** `docker compose up -d`
 - **Do NOT run `docker compose down`** casually — it removes containers.
   Elasticsearch's logs and the quests survive this (named volumes `esdata`
-  and `questdata`), but **Grafana
-  and Prometheus have no volumes, so their dashboards and metric history are
-  lost.** The Grafana dashboard is exported to
-  `monitoring/dashboards/*.json` as a backup for exactly this reason — if
-  you do run `down`, re-import that file into a fresh Grafana instance to
-  get the dashboard back.
+  and `questdata`), and the Grafana dashboard comes back on its own (it is
+  provisioned from files), but **Prometheus has no volume, so the metric
+  history is lost.**
 - **`docker compose down -v`** additionally deletes the `esdata` and
   `questdata` volumes, permanently removing all stored logs and quests. If you do this and want retention
   configured again afterwards, re-run:

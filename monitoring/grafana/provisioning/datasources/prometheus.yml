@@ -1,0 +1,11 @@
+# Grafana reads this when it starts: it adds the Prometheus data source
+# automatically, so nothing has to be set up by hand.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus          # the dashboards refer to the data source by this uid
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

@@ -1,0 +1,12 @@
+# Grafana reads this when it starts: it loads every dashboard JSON file from
+# /var/lib/grafana/dashboards (monitoring/grafana/dashboards in this repo), so
+# the dashboard survives `docker compose down` and works on any machine.
+apiVersion: 1
+
+providers:
+  - name: quest-app
+    type: file
+    folder: ""
+    allowUiUpdates: true     # panels can still be tweaked in Grafana (then exported back to the file)
+    options:
+      path: /var/lib/grafana/dashboards
